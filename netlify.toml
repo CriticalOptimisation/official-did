@@ -10,14 +10,20 @@
 
 [build]
   publish = "public"
-  # No generation. `true` is an explicit no-op, preferable to an empty command
-  # that would let Netlify's framework detection decide on its own.
-  command = "true"
-  # Rebuild only when the payload or this configuration changed — not for a
-  # change to the tooling or the documentation.
+  # Nothing is generated: the build is the deploy-time check. It refuses any
+  # build that does not extend the state that is live now — no key entry
+  # dropped or altered, no revocation record lost — so that a bad push, by a
+  # person or a tool, never goes live. See tools/netlify-build.sh.
+  command = "sh tools/netlify-build.sh"
+  # Rebuild only when the payload, this configuration, or what the check runs
+  # changed — not for a change to the tests or the documentation.
   #
   # `git diff --quiet` exits 0 when NOTHING changed, and Netlify cancels the
   # build on exit 0. On the first build $CACHED_COMMIT_REF is empty, the command
   # fails, the exit code is non-zero, and the build runs: the failure falls on
   # the safe side.
-  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- public netlify.toml"
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- public netlify.toml did.config.json tools/make-did.mjs tools/hash-to-curve.mjs tools/ots-header.mjs tools/fetch-live.mjs tools/netlify-build.sh"
+
+[build.environment]
+  # The check uses fetch and WebCrypto from Node's standard library.
+  NODE_VERSION = "22"
