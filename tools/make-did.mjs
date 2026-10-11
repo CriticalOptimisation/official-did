@@ -17,7 +17,7 @@
 // appends; a compromised key is REVOKED: its entries stay, marked `revoked`,
 // with a placeholder key nobody can sign for, and the original key moves to a
 // revocation record. Any other change to an existing entry is refused. The
-// format is defined on /doc/KeyRevocationRecords of the DID's own site.
+// format is defined on /doc/keyrevocationrecords of the DID's own site.
 //
 // Usage (document: --out <file>, default public/.well-known/did.json; site
 // root: --site <dir>, default public — records live where the document's
@@ -118,7 +118,7 @@ const contextFor = (did) => [
   "https://www.w3.org/ns/did/v1",
   "https://w3id.org/security/jwk/v1",
   "https://www.w3.org/ns/cid/v1",
-  { [SERVICE_TYPE]: `https://${domainOf(did)}/doc/${SERVICE_TYPE}#${SERVICE_TYPE}` },
+  { [SERVICE_TYPE]: `https://${domainOf(did)}/doc/${SERVICE_TYPE.toLowerCase()}#${SERVICE_TYPE}` },
 ];
 
 const defaultService = (did) =>

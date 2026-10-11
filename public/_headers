@@ -41,7 +41,7 @@
 
 /revocations/*
   # The revocation records and their timestamp proofs (see
-  # /doc/KeyRevocationRecords). Machines read them, people read the page.
+  # /doc/keyrevocationrecords). Machines read them, people read the page.
   X-Robots-Tag: noindex, nofollow, noarchive
   # Read by verifiers in browsers, from another origin, like the document.
   Access-Control-Allow-Origin: *

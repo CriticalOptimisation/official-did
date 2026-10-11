@@ -26,7 +26,7 @@ Natixar — **without asking Natixar anything**.
 | [`did.config.json`](did.config.json) | this site's own values: the DID. The tools read it; no code names a site |
 | [`public/.well-known/did.json`](public/.well-known/did.json) | the DID document, as served |
 | [`public/revocations/`](public/revocations/) | the revocation records of revoked keys, and their timestamp proofs |
-| [`public/doc/KeyRevocationRecords.html`](public/doc/KeyRevocationRecords.html) | **the** description of revocation records and of how to check a suspect credential, indexed, readable without a GitHub account |
+| [`public/doc/keyrevocationrecords.html`](public/doc/keyrevocationrecords.html) | **the** description of revocation records and of how to check a suspect credential, indexed, readable without a GitHub account |
 | [`public/_headers`](public/_headers) | response headers: media type, CORS, no caching, no indexing outside `/doc/` |
 | [`public/robots.txt`](public/robots.txt), [`public/sitemap.xml`](public/sitemap.xml) | crawlers may fetch `/doc/` only |
 | [`public/index.html`](public/index.html) | human visitors are redirected to natixar.com |
@@ -69,7 +69,7 @@ it ever signed unverifiable, and indistinguishable from a forgery. So:
   the last active key is allowed: a compromised key is revoked at once,
   successor or not;
 - credentials signed before the compromise can still be shown good, and
-  re-issued: see **[/doc/KeyRevocationRecords](https://natixar.pro/doc/KeyRevocationRecords)**,
+  re-issued: see **[/doc/keyrevocationrecords](https://natixar.pro/doc/keyrevocationrecords)**,
   the published description of the records and of the checking procedure.
 
 **3. Nothing goes live that breaks rule 2.** Netlify's build runs
@@ -139,7 +139,7 @@ method, and a document where no key is addressable by its thumbprint. For a
 revoked entry, it requires the exact placeholder key and a consistent
 revocation record, whose proof files commit to the roots they claim. It does
 not check Bitcoin or a timestamp authority: the procedure on
-`/doc/KeyRevocationRecords` and the external monitor do. With
+`/doc/keyrevocationrecords` and the external monitor do. With
 `--previous <site>`, it also refuses anything that is not an extension of
 that earlier state. A document with no active key is a warning, not a fault.
 

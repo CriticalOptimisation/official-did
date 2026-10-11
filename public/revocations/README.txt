@@ -4,4 +4,4 @@ tools/make-did.mjs and found through the `service` entry of type
 KeyRevocationRecords in /.well-known/did.json.
 
 The format, and how to check a credential signed by a revoked key:
-/doc/KeyRevocationRecords
+/doc/keyrevocationrecords

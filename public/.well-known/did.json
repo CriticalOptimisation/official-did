@@ -4,7 +4,7 @@
     "https://w3id.org/security/jwk/v1",
     "https://www.w3.org/ns/cid/v1",
     {
-      "KeyRevocationRecords": "https://natixar.pro/doc/KeyRevocationRecords#KeyRevocationRecords"
+      "KeyRevocationRecords": "https://natixar.pro/doc/keyrevocationrecords#KeyRevocationRecords"
     }
   ],
   "id": "did:web:natixar.pro",
