@@ -1,4 +1,4 @@
-# Response headers for natixar.pro.
+# Response headers for the DID's site.
 #
 # This file lives INSIDE the published folder rather than in netlify.toml: if
 # the site is ever deployed by drag-and-drop instead of from git, the headers
@@ -20,6 +20,9 @@
 /robots.txt
   X-Robots-Tag: noindex, nofollow, noarchive
 
+/sitemap.xml
+  X-Robots-Tag: noindex, nofollow, noarchive
+
 /.well-known/*
   X-Robots-Tag: noindex, nofollow, noarchive
 
@@ -27,7 +30,7 @@
   # The media type registered by the did:web method. `application/json` remains
   # the fallback should a third-party resolver refuse this one.
   Content-Type: application/did+json
-  # ESSENTIAL. Verifiers resolve `did:web:natixar.pro` from a browser, hence
+  # ESSENTIAL. Verifiers resolve the DID from a browser, hence
   # from ANOTHER origin. Without this header the read fails silently, and a
   # verifier that falls back on an embedded copy would believe it had checked
   # online without doing so.
@@ -35,3 +38,22 @@
   # A key rotation must be visible at once. Revalidate on every read rather
   # than serve a superseded document for the lifetime of a cache.
   Cache-Control: public, max-age=0, must-revalidate
+
+/revocations/*
+  # The revocation records and their timestamp proofs (see
+  # /doc/keyrevocationrecords). Machines read them, people read the page.
+  X-Robots-Tag: noindex, nofollow, noarchive
+  # Read by verifiers in browsers, from another origin, like the document.
+  Access-Control-Allow-Origin: *
+  # Anchors get added and OpenTimestamps proofs upgraded: revalidate always.
+  Cache-Control: public, max-age=0, must-revalidate
+
+/revocations/*.json
+  Content-Type: application/json
+
+/revocations/*.ots
+  Content-Type: application/octet-stream
+
+/revocations/*.tsr
+  # The RFC 3161 media type of a timestamp token.
+  Content-Type: application/timestamp-reply

@@ -1,7 +1,11 @@
 {
   "@context": [
     "https://www.w3.org/ns/did/v1",
-    "https://w3id.org/security/jwk/v1"
+    "https://w3id.org/security/jwk/v1",
+    "https://www.w3.org/ns/cid/v1",
+    {
+      "KeyRevocationRecords": "https://natixar.pro/doc/keyrevocationrecords#KeyRevocationRecords"
+    }
   ],
   "id": "did:web:natixar.pro",
   "verificationMethod": [
@@ -31,5 +35,12 @@
   "assertionMethod": [
     "did:web:natixar.pro#EXbuzo8vjX85lRx4zuwJiRhJYbQfKCLqK6VpEpZ3ggw",
     "did:web:natixar.pro#key-1"
+  ],
+  "service": [
+    {
+      "id": "did:web:natixar.pro#revocations",
+      "type": "KeyRevocationRecords",
+      "serviceEndpoint": "https://natixar.pro/revocations/"
+    }
   ]
 }

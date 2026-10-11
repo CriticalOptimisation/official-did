@@ -4,3 +4,4 @@
 User-agent: *
 Allow: /doc/
 Disallow: /
+Sitemap: https://natixar.pro/sitemap.xml
