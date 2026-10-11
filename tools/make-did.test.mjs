@@ -258,7 +258,7 @@ test("--revoke: placeholder key, `revoked`, a self-certifying record; the old si
   }]);
   assert.ok(doc["@context"].includes("https://www.w3.org/ns/cid/v1"));
   assert.ok(doc["@context"].some((c) => typeof c === "object" &&
-    c.KeyRevocationRecords === `https://${DOMAIN}/doc/KeyRevocationRecords#KeyRevocationRecords`));
+    c.KeyRevocationRecords === `https://${DOMAIN}/doc/keyrevocationrecords#KeyRevocationRecords`));
 
   // The record: the original key, whose thumbprint is its name.
   const record = JSON.parse(await readFile(recordPath(site, tpA), "utf8"));

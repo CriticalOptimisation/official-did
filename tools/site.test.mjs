@@ -24,9 +24,9 @@ const read = (name) => readFile(join(PUBLIC, name), "utf8");
 const INDEXABLE = ["/doc/"];
 const indexable = (path) => INDEXABLE.some((prefix) => path.startsWith(prefix));
 
-// Paths a crawler can reach under /doc/ once documentation is published
-// there. Netlify serves `name.html` at `/name` too, so both forms count.
-const DOC_SAMPLES = ["/doc/KeyRevocationRecords", "/doc/KeyRevocationRecords.html"];
+// Paths a crawler can reach under /doc/. Netlify serves `name.html` at
+// `/name` too, so both forms count.
+const DOC_SAMPLES = ["/doc/keyrevocationrecords", "/doc/keyrevocationrecords.html"];
 
 /**
  * Every path Netlify serves from `public/`: one per file, `/` for index.html,
@@ -224,7 +224,7 @@ test("no header reaches the DID document from two rules", async () => {
 test("robots.txt: the evaluator follows RFC 9309, and look-alikes of the /doc/ exception are refused", () => {
   const site = "User-agent: *\nAllow: /doc/\nDisallow: /\n";
   for (const [text, path, allowed] of [
-    [site, "/doc/KeyRevocationRecords", true],
+    [site, "/doc/keyrevocationrecords", true],
     [site, "/doc/", true],
     [site, "/", false],
     [site, "/.well-known/did.json", false],
@@ -292,7 +292,7 @@ test("the published document announces its revocation records and maps the type 
   }]);
   assert.ok(doc["@context"].includes("https://www.w3.org/ns/cid/v1"));
   assert.ok(doc["@context"].some((c) => typeof c === "object" &&
-    c.KeyRevocationRecords === `https://${domain}/doc/KeyRevocationRecords#KeyRevocationRecords`));
+    c.KeyRevocationRecords === `https://${domain}/doc/keyrevocationrecords#KeyRevocationRecords`));
 });
 
 test("Netlify's build runs the deploy-time check", async () => {
@@ -320,15 +320,24 @@ test("revocation records: CORS, no caching, exactly one media type, not indexed"
   }
 });
 
+// Netlify answers an HTML page whose path has capitals with a 301 to the
+// lowercase path (other files are served as named). A canonical URL or a
+// sitemap entry must not redirect, so pages get lowercase paths.
+test("every page under /doc/ has a lowercase path, the one Netlify serves without redirecting", async () => {
+  const pages = (await servedPaths()).filter((p) => indexable(p) && p.endsWith(".html"));
+  assert.ok(pages.length > 0);
+  assert.deepEqual(pages.filter((p) => p !== p.toLowerCase()), []);
+});
+
 /** The canonical URL an HTML page declares, or null. */
 const canonicalOf = (html) => /<link rel="canonical" href="([^"]+)">/.exec(html)?.[1] ?? null;
 
 test("the KeyRevocationRecords page: title, description, canonical URL, and no noindex", async () => {
   const { did } = await config();
-  const html = await read("doc/KeyRevocationRecords.html");
+  const html = await read("doc/keyrevocationrecords.html");
   assert.match(html, /<title>[^<]+<\/title>/);
   assert.match(html, /<meta name="description" content="[^"]+">/);
-  assert.equal(canonicalOf(html), `https://${domainOf(did)}/doc/KeyRevocationRecords`);
+  assert.equal(canonicalOf(html), `https://${domainOf(did)}/doc/keyrevocationrecords`);
   assert.doesNotMatch(html, /<meta name="robots"/i);
 });
 
