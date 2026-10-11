@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Produces the DID document of `did:web:natixar.pro` from the issuer's key, and
-// compares it with the published one.
+// Produces, extends, revokes and checks a did:web DID document. The DID comes
+// from did.config.json at the repository root (or --config, or --did); no
+// site is named in this code.
 //
 // WHY A SCRIPT AND NOT A HAND-WRITTEN FILE. The published document and the key
 // loaded by the signing service must designate the same thing, and nothing in
@@ -11,26 +12,46 @@
 // THE SECRET NEVER TOUCHES THE DISK. `--new` writes the private key to stdout
 // and nothing else. This script writes only PUBLIC key material to disk.
 //
-// Usage:
-//   node tools/make-did.mjs --new [--out <file>]
+// NO KEY ENTRY EVER DISAPPEARS. Removing a key would make every credential it
+// ever signed unverifiable, and indistinguishable from a forgery. A rotation
+// appends; a compromised key is REVOKED: its entries stay, marked `revoked`,
+// with a placeholder key nobody can sign for, and the original key moves to a
+// revocation record. Any other change to an existing entry is refused. The
+// format is defined on /doc/KeyRevocationRecords of the DID's own site.
+//
+// Usage (document: --out <file>, default public/.well-known/did.json; site
+// root: --site <dir>, default public — records live where the document's
+// `service` entry says):
+//   --new [--append]
 //       creates a P-256 pair, emits the private JWK on stdout, writes the document.
-//   node tools/make-did.mjs --from-private <file|-> [--out <file>]
-//       rebuilds the document from an existing key. Idempotent.
-//   node tools/make-did.mjs --from-private <file|-> --check
-//       writes nothing; exits 1 if the document on disk diverges from the key.
-//   node tools/make-did.mjs --verify-file <file>
-//       internal consistency check WITHOUT the private key: the only check that
-//       can run in continuous integration, where the secret never enters.
+//   --from-private <file|-> [--append]
+//       builds the document from an existing key. Without --append, refused if
+//       the document exists and would lose or change an entry. With --append,
+//       adds the key after the existing entries; a key already present changes
+//       nothing.
+//   --from-private <file|-> --check
+//       writes nothing; exits 1 if the document on disk does not carry the key.
+//   --revoke <thumbprint> --compromised-after <dateTimeStamp>
+//       revokes every entry of the key and writes its revocation record, as one
+//       change. Allowed on the last active key. Combinable with a key to --append.
+//   --revoke-update <thumbprint> --compromised-after <dateTimeStamp>
+//       moves a record's compromisedAfter EARLIER; never later.
+//   --anchor <thumbprint> --tree-size <n> --root <base64url> --ots <file> [--tsr <file>]
+//       adds an anchor of the issuance log to a record, with its proof files.
+//   --normalize
+//       brings @context and the `service` entry to the current form; refused
+//       if any entry would change.
+//   --verify-file <file> [--previous <site-dir>]
+//       consistency check WITHOUT any secret: the check the deploy-time build
+//       runs. With --previous, also refuses anything that does not extend the
+//       earlier state found in <site-dir> (document and records).
 //
 // Options:
-//   --did <did>          default did:web:natixar.pro
-//   --also-key-name <n>  ALSO publishes the same key under the fragment #<n>
-//                        (e.g. key-1). A safety net for as long as a signer
-//                        names its key instead of deriving the fragment from it.
-//
-// THE DOCUMENT IS APPEND-ONLY. Removing a key from the published document makes
-// every credential it ever signed unverifiable. A rotation adds the new key; it
-// never removes an old one.
+//   --config <file>        default did.config.json at the repository root
+//   --did <did>            overrides the config
+//   --also-key-name <n>    ALSO publishes the key under the fragment #<n>;
+//                          `next` takes the next free key-<n>. A name
+//                          designates one key for good.
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 // stdin is read through node:stream/consumers: the promise flavour of fs does
