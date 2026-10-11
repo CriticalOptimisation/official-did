@@ -172,14 +172,12 @@ function robotsAllows(text, path) {
   return best ? best.allow : true;
 }
 
-// REVIEW PLACEHOLDER: "robots.txt asks every crawler to fetch nothing" -> "robots.txt lets crawlers fetch /doc/ and nothing else"
 test("robots.txt lets crawlers fetch /doc/ and nothing else", async () => {
   const text = await read("robots.txt");
   for (const path of [...await servedPaths(), ...DOC_SAMPLES])
     assert.equal(robotsAllows(text, path), indexable(path), `robots.txt on ${path}`);
 });
 
-// REVIEW PLACEHOLDER: "/any/other/path is served with X-Robots-Tag: noindex, nofollow, noarchive" -> "every file served outside /doc/ gets X-Robots-Tag: noindex, nofollow, noarchive"
 // A path that matches no file is a 404, which no engine indexes. It is no
 // longer covered by a catch-all, since a catch-all `/*` would reach /doc/ too.
 test("every file served outside /doc/ gets X-Robots-Tag: noindex, nofollow, noarchive", async () => {
@@ -223,7 +221,6 @@ test("no header reaches the DID document from two rules", async () => {
 
 // --- edge cases ---------------------------------------------------------------
 
-// REVIEW PLACEHOLDER: "robots.txt: look-alikes of `Disallow: /` are refused" -> "robots.txt: the evaluator follows RFC 9309, and look-alikes of the /doc/ exception are refused"
 test("robots.txt: the evaluator follows RFC 9309, and look-alikes of the /doc/ exception are refused", () => {
   const site = "User-agent: *\nAllow: /doc/\nDisallow: /\n";
   for (const [text, path, allowed] of [
