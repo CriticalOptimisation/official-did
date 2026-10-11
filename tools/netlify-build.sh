@@ -46,3 +46,9 @@ fi
 
 make_did --verify-file "$DOC" --previous "$previous" || exit 1
 say "OK"
+exit 0
+
+# --- Change History -------------------------------------------------------
+# | PR     | Summary                                                       |
+# |--------|---------------------------------------------------------------|
+# | #6     | deploy-time check against the live state (#1)                 |

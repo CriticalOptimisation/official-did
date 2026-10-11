@@ -108,3 +108,9 @@ while :; do
   say "push failed, not retried: $(tail -n 1 "$errors")"
   exit 1
 done
+exit 0
+
+# --- Change History -------------------------------------------------------
+# | PR     | Summary                                                       |
+# |--------|---------------------------------------------------------------|
+# | #6     | re-apply and push, retrying lost races without limit (#1)     |
