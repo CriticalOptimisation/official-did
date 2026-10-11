@@ -368,3 +368,188 @@ test("--normalize: the CID context, the documentation term and the service entry
   assert.equal(after.service[0].type, "KeyRevocationRecords");
   ok(verifyPrevious(site, old), "normalized extends the old form");
 });
+
+// --- edge cases -----------------------------------------------------------------
+
+/** A site with keys a (also #key-1) and b, a revoked; returns the pieces. */
+async function revokedSite() {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey();
+  ok(onSite(site, ["--from-private", "-", "--also-key-name", "key-1"], a.jwk), "first key");
+  ok(onSite(site, ["--from-private", "-", "--append"], b.jwk), "second key");
+  const tpA = await thumbprintOf(a.jwk), tpB = await thumbprintOf(b.jwk);
+  ok(onSite(site, ["--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"]), "revoke");
+  return { site, a, b, tpA, tpB };
+}
+
+test("--append twice with the same key changes nothing", async () => {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], a.jwk), "first key");
+  ok(onSite(site, ["--from-private", "-", "--append"], b.jwk), "append");
+  const before = await readFile(docPath(site), "utf8");
+  const r = ok(onSite(site, ["--from-private", "-", "--append"], b.jwk), "append again");
+  assert.ok(hasLine(r.stderr, /^unchanged .+did\.json$/), r.stderr);
+  assert.equal(await readFile(docPath(site), "utf8"), before);
+});
+
+test("a logical name designates one key for good; `next` takes the next free key-<n>", async () => {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey(), c = await freshKey();
+  ok(onSite(site, ["--from-private", "-", "--also-key-name", "key-1"], a.jwk), "first key");
+  const taken = onSite(site, ["--from-private", "-", "--append", "--also-key-name", "key-1"], b.jwk);
+  assert.notEqual(taken.status, 0);
+  assert.ok(hasLine(taken.stderr, /^FAULT .+#key-1: already designates another key$/), taken.stderr);
+  ok(onSite(site, ["--from-private", "-", "--append", "--also-key-name", "next"], b.jwk), "next");
+  ok(onSite(site, ["--from-private", "-", "--append", "--also-key-name", "next"], c.jwk), "next again");
+  const ids = (await readDoc(site)).verificationMethod.map((m) => m.id.split("#")[1]);
+  assert.deepEqual(ids.filter((f) => f.startsWith("key-")), ["key-1", "key-2", "key-3"]);
+});
+
+test("--revoke refuses an unknown thumbprint, and a key already revoked", async () => {
+  const s = await revokedSite();
+  const unknown = onSite(s.site, ["--revoke", "A".repeat(43), "--compromised-after", "2026-01-01T00:00:00Z"]);
+  assert.notEqual(unknown.status, 0);
+  assert.ok(hasLine(unknown.stderr, /^FAULT A{43}: no entry with this thumbprint$/), unknown.stderr);
+  const again = onSite(s.site, ["--revoke", s.tpA, "--compromised-after", "2026-01-01T00:00:00Z"]);
+  assert.notEqual(again.status, 0);
+  assert.ok(hasLine(again.stderr, /^FAULT .+: already revoked$/), again.stderr);
+});
+
+test("--compromised-after: required, a UTC dateTimeStamp, not after the revocation", async () => {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], a.jwk), "first key");
+  ok(onSite(site, ["--from-private", "-", "--append"], b.jwk), "second key");
+  const tpA = await thumbprintOf(a.jwk);
+  const before = await readFile(docPath(site), "utf8");
+  for (const [args, re] of [
+    [[], /^FAULT --compromised-after <dateTimeStamp> is required: .+$/],
+    [["--compromised-after", "2026-01-01"], /^FAULT --compromised-after 2026-01-01: not a UTC dateTimeStamp$/],
+    [["--compromised-after", "2999-01-01T00:00:00Z"], /^FAULT --compromised-after 2999-01-01T00:00:00Z: after the revocation .+$/],
+  ]) {
+    const r = onSite(site, ["--revoke", tpA, ...args]);
+    assert.notEqual(r.status, 0);
+    assert.ok(hasLine(r.stderr, re), r.stderr);
+  }
+  assert.equal(await readFile(docPath(site), "utf8"), before, "nothing written");
+});
+
+test("revoking the last active key succeeds, with a warning; the document still verifies", async () => {
+  const site = await newSite();
+  const { jwk } = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], jwk), "only key");
+  const r = ok(onSite(site, ["--revoke", await thumbprintOf(jwk), "--compromised-after", "2026-01-01T00:00:00Z"]), "revoke");
+  assert.ok(hasLine(r.stderr, /^WARNING did:web:example\.test: no active key remains; .+$/), r.stderr);
+  const v = ok(verifyPrevious(site, site), "verify");
+  assert.ok(hasLine(v.stderr, /^WARNING did:web:example\.test: no active key; .+$/), v.stderr);
+});
+
+test("a revoked key is never published again", async () => {
+  const s = await revokedSite();
+  const r = onSite(s.site, ["--from-private", "-", "--append"], s.a.jwk);
+  assert.notEqual(r.status, 0);
+  assert.ok(hasLine(r.stderr, /^FAULT .+: revoked; a revoked key is never published again$/), r.stderr);
+});
+
+test("--check reports a revoked key as revoked", async () => {
+  const s = await revokedSite();
+  const r = onSite(s.site, ["--from-private", "-", "--check"], s.a.jwk);
+  assert.notEqual(r.status, 0);
+  assert.ok(hasLine(r.stderr, /^FAULT .+ carries the key supplied as revoked$/), r.stderr);
+});
+
+test("--revoke-update refuses to move compromisedAfter later", async () => {
+  const s = await revokedSite();
+  const r = onSite(s.site, ["--revoke-update", s.tpA, "--compromised-after", "2026-02-01T00:00:00Z"]);
+  assert.notEqual(r.status, 0);
+  assert.ok(hasLine(r.stderr, /^FAULT .+: compromisedAfter moved later .+; it may only move earlier$/), r.stderr);
+});
+
+test("--anchor: the same anchor twice changes nothing; other values for its tree size are refused; a .tsr is kept", async () => {
+  const s = await revokedSite();
+  const dir = await mkdtemp(join(tmpdir(), "did-ots-"));
+  const root = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
+  await writeFile(join(dir, "a.ots"), otsHeader(root));
+  await writeFile(join(dir, "a.tsr"), Buffer.from("token"));
+  const args = ["--anchor", s.tpA, "--tree-size", "7", "--root", root.toString("base64url"), "--ots", join(dir, "a.ots")];
+  ok(onSite(s.site, [...args, "--tsr", join(dir, "a.tsr")]), "anchor");
+  const r = ok(onSite(s.site, [...args, "--tsr", join(dir, "a.tsr")]), "again");
+  assert.ok(hasLine(r.stderr, /^unchanged .+\.json$/), r.stderr);
+  const other = Buffer.alloc(32, 9);
+  await writeFile(join(dir, "b.ots"), otsHeader(other));
+  const clash = onSite(s.site, ["--anchor", s.tpA, "--tree-size", "7", "--root", other.toString("base64url"), "--ots", join(dir, "b.ots")]);
+  assert.notEqual(clash.status, 0);
+  assert.ok(hasLine(clash.stderr, /^FAULT .+: anchor 7 is already listed with other values$/), clash.stderr);
+  const record = JSON.parse(await readFile(recordPath(s.site, s.tpA), "utf8"));
+  assert.deepEqual(record.anchors, [{ treeSize: 7, rootHash: root.toString("base64url"), ots: `${s.tpA}/7.ots`, tsr: `${s.tpA}/7.tsr` }]);
+});
+
+test("--verify-file: a revoked entry with another key, or a record whose key is not its name, is refused", async () => {
+  const s = await revokedSite();
+  const wrong = await copySite(s.site);
+  const d = await readDoc(wrong);
+  const entry = d.verificationMethod.find((m) => m.id.endsWith("#key-1"));
+  entry.publicKeyJwk = { crv: "P-256", kty: "EC", x: s.b.jwk.x, y: s.b.jwk.y };
+  await writeFile(docPath(wrong), JSON.stringify(d, null, 2) + "\n");
+  const r1 = verifyPrevious(wrong, wrong);
+  assert.notEqual(r1.status, 0);
+  assert.ok(hasLine(r1.stderr, /^FAULT .+#key-1: revoked, but its key is not the placeholder of a revoked thumbprint$/), r1.stderr);
+
+  const forged = await copySite(s.site);
+  const rec = JSON.parse(await readFile(recordPath(forged, s.tpA), "utf8"));
+  rec.publicKeyJwk = { crv: "P-256", kty: "EC", x: s.b.jwk.x, y: s.b.jwk.y };
+  await writeFile(recordPath(forged, s.tpA), JSON.stringify(rec, null, 2) + "\n");
+  const r2 = verifyPrevious(forged, forged);
+  assert.notEqual(r2.status, 0);
+  assert.ok(hasLine(r2.stderr, /^FAULT .+: the record's key does not hash to its name$/), r2.stderr);
+});
+
+test("--previous: an .ots upgraded on the same digest passes; another digest fails", async () => {
+  const s = await revokedSite();
+  const dir = await mkdtemp(join(tmpdir(), "did-ots-"));
+  const root = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
+  await writeFile(join(dir, "p.ots"), otsHeader(root));
+  ok(onSite(s.site, ["--anchor", s.tpA, "--tree-size", "5", "--root", root.toString("base64url"), "--ots", join(dir, "p.ots")]), "anchor");
+  const v1 = await copySite(s.site);
+  // Upgraded: same header, an attestation appended.
+  await writeFile(join(s.site, "revocations", s.tpA, "5.ots"), Buffer.concat([otsHeader(root), Buffer.from([0x00, 0x05])]));
+  ok(verifyPrevious(s.site, v1), "upgraded");
+  await writeFile(join(s.site, "revocations", s.tpA, "5.ots"), otsHeader(Buffer.alloc(32, 1)));
+  const r = verifyPrevious(s.site, v1);
+  assert.notEqual(r.status, 0);
+  assert.ok(hasLine(r.stderr, /^FAULT .+: anchor 5 removed or changed since the previous state$/), r.stderr);
+});
+
+test("the records' endpoint may move, if every record follows; a lost record or a later compromisedAfter fails", async () => {
+  const s = await revokedSite();
+  const v1 = await copySite(s.site);
+  const move = async (site) => {
+    const d = await readDoc(site);
+    d.service[0].serviceEndpoint = "https://example.test/did/v2/revocations/";
+    await writeFile(docPath(site), JSON.stringify(d, null, 2) + "\n");
+    await mkdir(join(site, "did", "v2"), { recursive: true });
+    await cp(join(site, "revocations"), join(site, "did", "v2", "revocations"), { recursive: true });
+    await rm(join(site, "revocations"), { recursive: true });
+  };
+  const moved = await copySite(s.site);
+  await move(moved);
+  ok(verifyPrevious(moved, v1), "moved with its records");
+
+  const lost = await copySite(s.site);
+  await move(lost);
+  await rm(join(lost, "did", "v2", "revocations", `${s.tpA}.json`));
+  const r1 = verifyPrevious(lost, v1);
+  assert.notEqual(r1.status, 0);
+  assert.ok(hasLine(r1.stderr, /^FAULT .+: revoked, but no record at .+$/), r1.stderr);
+
+  const later = await copySite(s.site);
+  await move(later);
+  const path = join(later, "did", "v2", "revocations", `${s.tpA}.json`);
+  const rec = JSON.parse(await readFile(path, "utf8"));
+  rec.compromisedAfter = "2026-02-01T00:00:00Z";
+  await writeFile(path, JSON.stringify(rec, null, 2) + "\n");
+  const r2 = verifyPrevious(later, v1);
+  assert.notEqual(r2.status, 0);
+  assert.ok(hasLine(r2.stderr, /^FAULT .+: compromisedAfter moved later .+$/), r2.stderr);
+});

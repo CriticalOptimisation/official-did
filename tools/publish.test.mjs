@@ -185,3 +185,14 @@ test("nothing to publish: the change is already there, no push", async () => {
   assert.equal(matching(r.stderr, /^publish: nothing to publish$/).length, 1, r.stderr);
   assert.equal(await readFile(count, "utf8").catch(() => "0"), "0");
 });
+
+test("a make-did.mjs failure is not a lost race: no push, no retry", async () => {
+  const ctx = await setup();
+  const { bin, count } = await fakeGit(ctx.root, { mode: "real", times: 0 });
+  const r = publish({ PATH: `${bin}:${process.env.PATH}`, DID_PUBLISH_WORKDIR: ctx.work },
+    ["--revoke", "A".repeat(43), "--compromised-after", "2026-01-01T00:00:00Z"], "");
+  assert.notEqual(r.status, 0);
+  assert.equal(matching(r.stderr, /^FAULT A{43}: no entry with this thumbprint$/).length, 1, r.stderr);
+  assert.equal(matching(r.stderr, /^publish: make-did\.mjs failed, not retried$/).length, 1, r.stderr);
+  assert.equal(await readFile(count, "utf8").catch(() => "0"), "0");
+});
