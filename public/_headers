@@ -4,6 +4,25 @@
 # the site is ever deployed by drag-and-drop instead of from git, the headers
 # travel with the folder.
 
+# NO SEARCH ENGINE INDEXES ANYTHING SERVED HERE, EXCEPT /doc/. robots.txt asks
+# crawlers not to fetch; this header tells those that fetch anyway not to
+# index. Netlify cannot exclude /doc/ from a `/*` rule, and crawlers obey the
+# most restrictive of two X-Robots-Tag headers, so the non-indexed paths are
+# named one by one. A FILE ADDED OUTSIDE /doc/ NEEDS A RULE HERE:
+# tools/site.test.mjs fails until it has one.
+
+/
+  X-Robots-Tag: noindex, nofollow, noarchive
+
+/index.html
+  X-Robots-Tag: noindex, nofollow, noarchive
+
+/robots.txt
+  X-Robots-Tag: noindex, nofollow, noarchive
+
+/.well-known/*
+  X-Robots-Tag: noindex, nofollow, noarchive
+
 /.well-known/did.json
   # The media type registered by the did:web method. `application/json` remains
   # the fallback should a third-party resolver refuse this one.

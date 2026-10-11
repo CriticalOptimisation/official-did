@@ -1,0 +1,6 @@
+# natixar.pro carries a DID document for machines, not pages for people. Only
+# /doc/, the documentation for people, may be crawled and indexed. Resolution
+# is unaffected: resolvers fetch the document directly and do not read this file.
+User-agent: *
+Allow: /doc/
+Disallow: /
