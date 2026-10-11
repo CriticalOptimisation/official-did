@@ -2,7 +2,7 @@
 //
 // Netlify publishes `public/` as it is: nothing is built, so these files ARE
 // the behaviour. The tests read them as Netlify does, without network, and
-// check that natixar.pro asks not to be indexed without breaking the headers a
+// check that the site asks not to be indexed without breaking the headers a
 // resolver needs on the DID document.
 //
 // Run with: node --test tools/site.test.mjs
@@ -18,7 +18,7 @@ const DID_PATH = "/.well-known/did.json";
 
 const read = (name) => readFile(join(PUBLIC, name), "utf8");
 
-// The only part of natixar.pro that search engines may index: documentation
+// The only part of the site that search engines may index: documentation
 // for people, such as how to check a credential signed by a revoked key.
 // Everything else is for machines and stays out of search results.
 const INDEXABLE = ["/doc/"];
@@ -269,4 +269,87 @@ test("_headers: a path pattern matches whole paths only", () => {
   assert.ok(!matches(DID_PATH, "/.well-known/didXjson"));
   assert.ok(matches("/:dir/did.json", DID_PATH));
   assert.ok(!matches("/:dir/did.json", "/a/b/did.json"));
+});
+
+// --- the site's configuration, revocation records, documentation -------------
+
+const REPO_ROOT = resolve(PUBLIC, "..");
+const config = async () => JSON.parse(await readFile(join(REPO_ROOT, "did.config.json"), "utf8"));
+const domainOf = (did) => did.replace(/^did:web:/, "").split(":")[0];
+
+test("did.config.json names the DID that the published document carries", async () => {
+  const { did } = await config();
+  assert.match(did, /^did:web:[a-z0-9.-]+$/);
+  assert.equal(JSON.parse(await read(".well-known/did.json")).id, did);
+});
+
+test("the published document announces its revocation records and maps the type to its page", async () => {
+  const { did } = await config();
+  const domain = domainOf(did);
+  const doc = JSON.parse(await read(".well-known/did.json"));
+  assert.deepEqual(doc.service, [{
+    id: `${did}#revocations`, type: "KeyRevocationRecords", serviceEndpoint: `https://${domain}/revocations/`,
+  }]);
+  assert.ok(doc["@context"].includes("https://www.w3.org/ns/cid/v1"));
+  assert.ok(doc["@context"].some((c) => typeof c === "object" &&
+    c.KeyRevocationRecords === `https://${domain}/doc/KeyRevocationRecords#KeyRevocationRecords`));
+});
+
+test("Netlify's build runs the deploy-time check", async () => {
+  const toml = await readFile(join(REPO_ROOT, "netlify.toml"), "utf8");
+  assert.ok(toml.split("\n").some((l) => /^\s*command = "sh tools\/netlify-build\.sh"$/.test(l)), "build command");
+});
+
+const RECORD_PATHS = {
+  "/revocations/T.json": "application/json",
+  "/revocations/T/42.ots": "application/octet-stream",
+  "/revocations/T/42.tsr": "application/timestamp-reply",
+};
+
+test("revocation records: CORS, no caching, exactly one media type, not indexed", async () => {
+  const rules = parseHeaders(await read("_headers"));
+  for (const [path, type] of Object.entries(RECORD_PATHS)) {
+    const got = headersFor(rules, path);
+    const named = (n) => got.filter((h) => h.name === n);
+    assert.deepEqual(named("content-type").map((h) => h.value), [type], `${path}: Content-Type`);
+    assert.deepEqual(named("access-control-allow-origin").map((h) => h.value), ["*"], `${path}: CORS`);
+    assert.equal(named("cache-control").length, 1, `${path}: one Cache-Control`);
+    assert.ok(revalidatesEveryRead(named("cache-control")[0].value), `${path}: Cache-Control`);
+    assert.equal(named("x-robots-tag").length, 1, `${path}: one X-Robots-Tag`);
+    assert.deepEqual(robotsLacks(named("x-robots-tag")[0].value), [], `${path}: X-Robots-Tag`);
+  }
+});
+
+/** The canonical URL an HTML page declares, or null. */
+const canonicalOf = (html) => /<link rel="canonical" href="([^"]+)">/.exec(html)?.[1] ?? null;
+
+test("the KeyRevocationRecords page: title, description, canonical URL, and no noindex", async () => {
+  const { did } = await config();
+  const html = await read("doc/KeyRevocationRecords.html");
+  assert.match(html, /<title>[^<]+<\/title>/);
+  assert.match(html, /<meta name="description" content="[^"]+">/);
+  assert.equal(canonicalOf(html), `https://${domainOf(did)}/doc/KeyRevocationRecords`);
+  assert.doesNotMatch(html, /<meta name="robots"/i);
+});
+
+test("sitemap.xml lists exactly the canonical URLs of the pages under /doc/, and robots.txt points to it", async () => {
+  const { did } = await config();
+  const locs = [...(await read("sitemap.xml")).matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]).sort();
+  const pages = (await servedPaths()).filter((p) => indexable(p) && p.endsWith(".html"));
+  const canonicals = (await Promise.all(pages.map(async (p) => canonicalOf(await read(p.slice(1)))))).sort();
+  assert.deepEqual(locs, canonicals);
+  const robots = (await read("robots.txt")).split("\n");
+  assert.ok(robots.includes(`Sitemap: https://${domainOf(did)}/sitemap.xml`), "Sitemap line");
+});
+
+test("no tracked file under tools/ names a site: site values live in did.config.json", async () => {
+  // Built from parts, so that this file does not contain the word itself.
+  const word = new RegExp(`\\b${["nati", "xar"].join("")}\\b`, "i");
+  const { execFileSync } = await import("node:child_process");
+  const files = execFileSync("git", ["ls-files", "tools"], { cwd: REPO_ROOT, encoding: "utf8" })
+    .split("\n").filter(Boolean);
+  assert.ok(files.length > 0);
+  const offenders = [];
+  for (const f of files) if (word.test(await readFile(join(REPO_ROOT, f), "utf8"))) offenders.push(f);
+  assert.deepEqual(offenders, []);
 });
