@@ -262,9 +262,15 @@ ends with `netlify-build: OK` or a non-zero exit. The refusals before the
 check print one line each:
 
 - `netlify-build: DID_DOMAIN is not set`
+- `netlify-build: DID_DOMAIN <domain> is not a lower-case host name`
 - `netlify-build: DID_REDIRECT is not set`
+- `netlify-build: URL is not set`, or `netlify-build: URL <url> is not a URL`
 - `netlify-build: URL host <host> is not DID_DOMAIN <domain>`
 - `netlify-build: no branch data/<domain> in <repository>`
+
+The data branch is extracted with `git archive`, and the branch's own
+`.gitattributes` is overridden, so that it can neither hide a file from the
+check of step 3 nor rewrite one. Each build starts from an empty `DID_DIST`.
 
 ### `tools/build-site.mjs`
 
@@ -273,16 +279,22 @@ DID_DOMAIN=example.org DID_REDIRECT=https://www.example.com/ \
   node tools/build-site.mjs --data <data tree> --out <dist> [--public <dir>]
 ```
 
-`--public` defaults to the repository's `public/`. It writes nothing outside
-`--out`. Each refusal is one line, `FAULT <path>: <reason>`, and the exit
+`--public` defaults to the repository's `public/`. `--out` must not exist,
+and nothing is written outside it, nor anything at all when the build is
+refused. Each refusal is one line, `FAULT <path>: <reason>`, and the exit
 code is `1`:
 
 - `FAULT <path>: not a data file`, for any file other than the data paths;
+- `FAULT <path>: not a regular file`, for a symbolic link, even at a data path;
 - `FAULT .gitignore: missing`, or `FAULT .gitignore: differs from tools/data-branch.gitignore`;
-- `FAULT .well-known/did.json: id is <id>, not did:web:<domain>`;
+- `FAULT .well-known/did.json: missing`, `not JSON`, or `id is <id>, not did:web:<domain>`;
+- `FAULT <path>: both a data file and a file of <public>`: a data file never replaces a shared one;
 - `FAULT <template>: {{<NAME>}} left unfilled`.
 
-A missing variable or argument is a usage error, exit `2`.
+In `.html` and `.xml` files, the values are escaped for HTML. A missing
+variable or argument, a `DID_DOMAIN` that is not a lower-case host name, a
+`DID_REDIRECT` that is not an `http(s)` URL, and an existing `--out` are
+usage errors, exit `2`.
 
 ### `tools/publish.sh`
 
@@ -303,9 +315,14 @@ DID_PUBLISH_BUILD_HOOK=https://api.netlify.com/build_hooks/<id> \
 | `NODE` | default `node` |
 
 Exit codes: `0` published and deployed, or nothing to publish; `1` a failure,
-nothing pushed; `2` a usage error; `3` **published, not deployed**: the push
-was accepted, but the build hook failed
+nothing pushed; `2` a usage error (`publish: <VARIABLE> is not set`); `3`
+**published, not deployed**: the push was accepted, but the build hook failed
 (`publish: published <sha>, not deployed: build hook failed (<reason>)`).
+
+Each round starts from a clean copy of the remote head: files left in the
+working copy, ignored ones included, are removed. A change outside the data
+paths, such as a record written where a moved `service` endpoint points, is
+refused: `publish: <path> is not a data path, not published`, exit `1`.
 
 ### `tools/data-branch.sh`
 
@@ -319,9 +336,17 @@ commit and pushes it. Without `<source site>`, the commit holds only the
 `.gitignore`, for a new domain. With `<source site>`, it copies the data paths
 of that directory byte for byte. It first checks that each copied file is
 identical to the one the live site serves, from `https://<domain>/`, or from
-`DID_PREVIOUS_DIR` when that is set. If a file differs, it prints
-`data-branch: <path> differs from the live state`, exits `1` and creates
-nothing.
+`DID_PREVIOUS_DIR` when that is set. It refuses, exits `1` and creates
+nothing when:
+
+- a file differs: `data-branch: <path> differs from the live state`;
+- the live site serves a data file that the source lacks:
+  `data-branch: <path> is live but missing from <source site>`;
+- a data path of the source is a link: `data-branch: <path> is not a regular file`;
+- the branch exists: `data-branch: data/<domain> already exists in <clone>`.
+
+It leaves the clone's `HEAD`, index and working tree as they are. A
+`<domain>` that is not a lower-case host name is a usage error, exit `2`.
 
 ## Adding a domain
 

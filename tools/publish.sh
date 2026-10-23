@@ -95,7 +95,7 @@ deploy() {
   "$NODE" -e '
     fetch(process.argv[1], { method: "POST", signal: AbortSignal.timeout(30000) }).then(
       (r) => { if (!r.ok) { console.log(`HTTP ${r.status}`); process.exit(1); } },
-      (e) => { console.log(e.cause?.code ?? e.message); process.exit(1); });' "$HOOK"
+      (e) => { console.log(e.cause?.code ?? e.cause?.message ?? e.message); process.exit(1); });' "$HOOK"
 }
 
 errors=$(mktemp)

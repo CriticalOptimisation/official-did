@@ -56,6 +56,9 @@ data_files() {
 
 files=
 if [ -n "$source" ]; then
+  # A file under a data path that is not a regular file, such as a link.
+  stray=$(cd "$source" && find .well-known revocations ! -type f ! -type d 2>/dev/null | head -n 1)
+  [ -z "$stray" ] || { say "${stray#./} is not a regular file"; exit 1; }
   if [ -n "${DID_PREVIOUS_DIR:-}" ]; then
     live=$DID_PREVIOUS_DIR
   else
@@ -70,9 +73,6 @@ if [ -n "$source" ]; then
   for f in $(data_files "$live"); do
     [ -f "$source/$f" ] || { say "$f is live but missing from $source"; exit 1; }
   done
-  # A file under a data path that is not a regular file, such as a link.
-  stray=$(cd "$source" && find .well-known revocations ! -type f ! -type d 2>/dev/null | head -n 1)
-  [ -z "$stray" ] || { say "${stray#./} is not a regular file"; exit 1; }
 fi
 
 export GIT_INDEX_FILE="$TMP/index"
