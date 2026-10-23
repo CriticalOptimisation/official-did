@@ -455,3 +455,11 @@ What it cannot catch: a consistent document built on a key nobody holds. Only
 <command that prints the private JWK> | DID_DOMAIN=<domain> \
   node tools/make-did.mjs --site <data clone> --from-private - --check
 ```
+
+<!--
+Change History
+
+| PR  | Summary |
+|-----|---------|
+| #10 | several domains: code on main, data on one orphan branch per domain (#8) |
+-->

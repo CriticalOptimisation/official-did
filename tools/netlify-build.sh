@@ -106,3 +106,4 @@ exit 0
 # | PR     | Summary                                                       |
 # |--------|---------------------------------------------------------------|
 # | #6     | deploy-time check against the live state (#1)                 |
+# | #10    | fetches data/$DID_DOMAIN, builds dist/, then checks (#8)      |

@@ -152,3 +152,4 @@ exit 0
 # | PR     | Summary                                                       |
 # |--------|---------------------------------------------------------------|
 # | #6     | re-apply and push, retrying lost races without limit (#1)     |
+# | #10    | pushes data/$DID_DOMAIN only, then calls the build hook (#8)  |

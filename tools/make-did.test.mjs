@@ -591,3 +591,8 @@ test("the records' endpoint may move, if every record follows; a lost record or 
   assert.notEqual(r2.status, 0);
   assert.ok(hasLine(r2.stderr, /^FAULT .+: compromisedAfter moved later .+$/), r2.stderr);
 });
+
+// --- Change History -------------------------------------------------------
+// | PR     | Summary                                                       |
+// |--------|---------------------------------------------------------------|
+// | #10    | DID_DOMAIN and DID_LOG replace --config (#8)                  |

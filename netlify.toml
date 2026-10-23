@@ -32,3 +32,8 @@
 [build.environment]
   # The check uses fetch and WebCrypto from Node's standard library.
   NODE_VERSION = "22"
+
+# --- Change History -------------------------------------------------------
+# | PR     | Summary                                                       |
+# |--------|---------------------------------------------------------------|
+# | #10    | every project builds main and publishes dist/ (#8)            |

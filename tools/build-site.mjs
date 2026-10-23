@@ -122,3 +122,8 @@ async function main() {
 }
 
 main().catch((e) => { console.error(`build-site: ${e.message}`); process.exit(1); });
+
+// --- Change History -------------------------------------------------------
+// | PR     | Summary                                                       |
+// |--------|---------------------------------------------------------------|
+// | #10    | assembles one domain's site from public/ and its data (#8)    |

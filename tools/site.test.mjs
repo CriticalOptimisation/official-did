@@ -402,3 +402,8 @@ test("no tracked file outside tools/fixtures/ names a real domain", async () => 
   for (const f of files) if (namesRealDomain(await readFile(join(REPO_ROOT, f), "utf8"))) offenders.push(f);
   assert.deepEqual(offenders, []);
 });
+
+// --- Change History -------------------------------------------------------
+// | PR     | Summary                                                       |
+// |--------|---------------------------------------------------------------|
+// | #10    | reads the built site; main names no domain (#8)               |

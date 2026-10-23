@@ -138,3 +138,8 @@ test("init leaves the clone's HEAD, index and working tree as they were", async 
   assert.equal(r.stderr, "");
   assert.deepEqual({ head: git(dir, "rev-parse", "HEAD"), branch: git(dir, "symbolic-ref", "HEAD"), status: git(dir, "status", "--porcelain") }, before);
 });
+
+// --- Change History -------------------------------------------------------
+// | PR     | Summary                                                       |
+// |--------|---------------------------------------------------------------|
+// | #10    | init of a data branch, checked against the live state (#8)    |

@@ -228,3 +228,8 @@ test("tools/data-branch.gitignore admits exactly the data paths", async () => {
   git(dir, "add", "-A");
   assert.deepEqual(git(dir, "ls-files").split("\n").filter(Boolean).sort(), admitted.sort());
 });
+
+// --- Change History -------------------------------------------------------
+// | PR     | Summary                                                       |
+// |--------|---------------------------------------------------------------|
+// | #10    | the site of one domain, and what a data tree may hold (#8)    |

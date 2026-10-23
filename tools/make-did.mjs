@@ -524,3 +524,8 @@ async function main() {
 }
 
 main().catch((e) => { console.error(e.message); process.exit(1); });
+
+// --- Change History -------------------------------------------------------
+// | PR     | Summary                                                       |
+// |--------|---------------------------------------------------------------|
+// | #10    | the DID from --did or DID_DOMAIN, the log from DID_LOG (#8)   |

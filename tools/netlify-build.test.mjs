@@ -185,3 +185,8 @@ test("a stale output directory is replaced, not merged into", async () => {
   await assert.rejects(stat(join(dist, "stale.html")));
   assert.equal(await readFile(join(dist, DOCUMENT), "utf8"), await docOf(a.tree));
 });
+
+// --- Change History -------------------------------------------------------
+// | PR     | Summary                                                       |
+// |--------|---------------------------------------------------------------|
+// | #10    | the build fetches and checks data/$DID_DOMAIN (#8)            |

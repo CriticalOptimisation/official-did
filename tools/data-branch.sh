@@ -91,3 +91,8 @@ commit=$(git -C "$clone" commit-tree "$tree" -m "$message") || exit 1
 git -C "$clone" update-ref "refs/heads/$branch" "$commit" "" || exit 1
 printf '%s\n' "$commit"
 exit 0
+
+# --- Change History -------------------------------------------------------
+# | PR     | Summary                                                       |
+# |--------|---------------------------------------------------------------|
+# | #10    | the orphan commit of a new data branch, as live (#8)          |

@@ -277,3 +277,8 @@ test("an unreachable build hook: published, not deployed, exit 3", async () => {
   assert.equal(matching(r.stderr, new RegExp(`^publish: published ${head}, not deployed: build hook failed \\(ECONNREFUSED\\)$`)).length, 1, r.stderr);
   assert.equal(lines((await readFile(log, "utf8")).trimEnd()).length, 1);
 });
+
+// --- Change History -------------------------------------------------------
+// | PR     | Summary                                                       |
+// |--------|---------------------------------------------------------------|
+// | #10    | publishing to data/$DID_DOMAIN, then the build hook (#8)      |
