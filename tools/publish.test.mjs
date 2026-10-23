@@ -15,11 +15,12 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile, mkdir, chmod } from "node:fs/promises";
+import { readFile, writeFile, mkdir, chmod, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import {
   A, B, PUBLISH, MAKE_DID, REAL_GIT, DOCUMENT,
-  twoDomainOrigin, headOf, git, freshJwk, hookServer, run, lines,
+  twoDomainOrigin, headOf, git, freshJwk, thumbprintOf, hookServer, run, lines,
 } from "./fixtures/domains.mjs";
 
 const BRANCH = `data/${A}`;
@@ -207,4 +208,72 @@ test("a failed build hook: published, not deployed; one alert, exit 3", async ()
   assert.equal(lines((await readFile(log, "utf8")).trimEnd()).length, 1);
   assert.deepEqual(r.hookCalls, ["POST"]);
   assert.equal(originDoc(ctx).verificationMethod.length, 3);
+});
+
+// --- edge cases -------------------------------------------------------------------
+
+test("each required variable missing is a usage error: exit 2, nothing pushed, no build", async () => {
+  const ctx = await setup();
+  const before = headOf(ctx.origin, BRANCH);
+  for (const v of ["DID_DOMAIN", "DID_PUBLISH_WORKDIR", "DID_PUBLISH_BUILD_HOOK"]) {
+    const r = await publish(ctx, { [v]: "" }, ["--from-private", "-", "--append"], JSON.stringify(await freshJwk()));
+    assert.equal(r.status, 2, r.stderr);
+    assert.deepEqual(lines(r.stderr.trimEnd()), [`publish: ${v} is not set`]);
+    assert.deepEqual(r.hookCalls, []);
+  }
+  assert.equal(headOf(ctx.origin, BRANCH), before);
+});
+
+test("a change outside the data paths is refused: nothing pushed, no build", async () => {
+  const ctx = await setup();
+  // A document whose records live elsewhere than revocations/: a revocation
+  // writes its record outside the data paths, which the branch cannot hold.
+  const jwk = await freshJwk();
+  await rm(join(ctx.seed, ".well-known"), { recursive: true });
+  await rm(join(ctx.seed, "revocations"), { recursive: true });
+  const r0 = spawnSync(process.execPath, [MAKE_DID, "--did", `did:web:${A}`, "--site", ctx.seed,
+    "--out", join(ctx.seed, DOCUMENT), "--from-private", "-"], { input: JSON.stringify(jwk), encoding: "utf8" });
+  assert.equal(r0.status, 0, r0.stderr);
+  const doc = JSON.parse(await readFile(join(ctx.seed, DOCUMENT), "utf8"));
+  doc.service[0].serviceEndpoint = `https://${A}/elsewhere/`;
+  await writeFile(join(ctx.seed, DOCUMENT), JSON.stringify(doc, null, 2) + "\n");
+  git(ctx.seed, "add", "-A");
+  git(ctx.seed, "commit", "-qm", "records elsewhere");
+  git(ctx.seed, "push", "-q", "origin", BRANCH);
+  const before = headOf(ctx.origin, BRANCH);
+
+  const tp = await thumbprintOf(jwk);
+  const r = await publish(ctx, {}, ["--revoke", tp, "--compromised-after", "2026-01-01T00:00:00Z"]);
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(matching(r.stderr, new RegExp(`^publish: elsewhere/${tp}\\.json is not a data path, not published$`)).length, 1, r.stderr);
+  assert.equal(headOf(ctx.origin, BRANCH), before);
+  assert.deepEqual(r.hookCalls, []);
+});
+
+test("a file left in the working copy by an earlier run is never published", async () => {
+  const ctx = await setup();
+  await writeFile(join(ctx.work, "stray.html"), "stray\n");
+  await mkdir(join(ctx.work, "revocations", "x"), { recursive: true });
+  await writeFile(join(ctx.work, "revocations", "x", "1.ots"), "stray\n");
+  const r = await publish(ctx, {}, ["--from-private", "-", "--append"], JSON.stringify(await freshJwk()));
+  assert.equal(r.status, 0, r.stderr);
+  const files = git(ctx.origin, "ls-tree", "-r", "--name-only", BRANCH).split("\n").filter(Boolean);
+  assert.deepEqual(files.filter((f) => !/^(\.gitignore|\.well-known\/did\.json|revocations\/[A-Za-z0-9_-]{43}\.json)$/.test(f)), []);
+  assert.deepEqual(r.hookCalls, ["POST"]);
+});
+
+test("an unreachable build hook: published, not deployed, exit 3", async () => {
+  const ctx = await setup();
+  const { stub, log } = await loggerStub(ctx.root);
+  // A port that was just freed: nothing listens on it.
+  const gone = await hookServer();
+  gone.close();
+  const r = await run("sh", [PUBLISH, "--from-private", "-", "--append"], {
+    DID_DOMAIN: A, DID_PUBLISH_WORKDIR: ctx.work, DID_PUBLISH_BUILD_HOOK: gone.url,
+    DID_PUBLISH_PAUSE_MAX: "0", DID_PUBLISH_LOGGER: stub,
+  }, JSON.stringify(await freshJwk()));
+  assert.equal(r.status, 3, r.stderr);
+  const head = headOf(ctx.origin, BRANCH);
+  assert.equal(matching(r.stderr, new RegExp(`^publish: published ${head}, not deployed: build hook failed \\(ECONNREFUSED\\)$`)).length, 1, r.stderr);
+  assert.equal(lines((await readFile(log, "utf8")).trimEnd()).length, 1);
 });

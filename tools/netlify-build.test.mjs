@@ -13,12 +13,12 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile, mkdtemp } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp, mkdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   A, B, LOCAL, REDIRECT, NETLIFY_BUILD, DOCUMENT,
-  dataTree, copyOf, makeDid, freshJwk, twoDomainOrigin, serve, run, hasLine,
+  dataTree, copyOf, makeDid, freshJwk, twoDomainOrigin, serve, run, git, hasLine, lines,
 } from "./fixtures/domains.mjs";
 
 /** Runs the build for `domain`, with its own output directory; resolves to { status, stderr, dist }. */
@@ -121,4 +121,67 @@ test("a build without DID_DOMAIN is refused", async () => {
   const r = await build(null, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: await copyOf(a.tree), URL: `https://${A}` });
   assert.equal(r.status, 1, r.stderr);
   assert.ok(hasLine(r.stderr, /^netlify-build: DID_DOMAIN is not set$/), r.stderr);
+});
+
+// --- edge cases -------------------------------------------------------------------
+
+test("a domain without a data branch is refused, and names the repository", async () => {
+  const o = await twoDomainOrigin();
+  const C = "c.example.test";
+  const r = await build(C, { REPOSITORY_URL: o.origin, DID_PREVIOUS_DIR: await copyOf(o.trees[A].tree), URL: `https://${C}` });
+  assert.equal(r.status, 1, r.stderr);
+  assert.deepEqual(lines(r.stderr.trimEnd()), [`netlify-build: no branch data/${C} in ${o.origin}`]);
+});
+
+test("the refusals before the check: DID_REDIRECT, URL, an upper-case DID_DOMAIN", async () => {
+  const a = await dataTree(A);
+  const base = { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: await copyOf(a.tree), URL: `https://${A}` };
+  for (const [domain, env, message] of [
+    [A, { DID_REDIRECT: "" }, "netlify-build: DID_REDIRECT is not set"],
+    [A, { URL: "" }, "netlify-build: URL is not set"],
+    [A, { URL: "not a url" }, "netlify-build: URL not a url is not a URL"],
+    [A.toUpperCase(), { URL: `https://${A.toUpperCase()}` }, `netlify-build: DID_DOMAIN ${A.toUpperCase()} is not a lower-case host name`],
+    [`${A}..`, { URL: `https://${A}` }, `netlify-build: DID_DOMAIN ${A}.. is not a lower-case host name`],
+  ]) {
+    const r = await build(domain, { ...base, ...env });
+    assert.equal(r.status, 1, r.stderr);
+    assert.deepEqual(lines(r.stderr.trimEnd()), [message]);
+    await assert.rejects(stat(r.dist), "nothing is built");
+  }
+});
+
+test("a port in $URL is not compared: the host name is", async () => {
+  const a = await dataTree(A);
+  const r = await build(A, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: await copyOf(a.tree), URL: `https://${A}:8443/` });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(hasLine(r.stderr, /^netlify-build: OK$/), r.stderr);
+});
+
+test("a data branch's .gitattributes cannot hide a file from the build", async () => {
+  const o = await twoDomainOrigin();
+  // A commit on data/A that adds a netlify.toml and hides it, and itself, from `git archive`.
+  const work = join(o.root, "hide");
+  git(o.root, "clone", "-q", "--single-branch", "-b", `data/${A}`, o.origin, work);
+  git(work, "config", "user.email", "test@example.invalid");
+  git(work, "config", "user.name", "test");
+  await writeFile(join(work, ".gitattributes"), "netlify.toml export-ignore\n.gitattributes export-ignore\n");
+  await writeFile(join(work, "netlify.toml"), '[build]\n  command = "true"\n');
+  git(work, "add", "-f", ".gitattributes", "netlify.toml");
+  git(work, "commit", "-qm", "hide");
+  git(work, "push", "-q", "origin", `data/${A}`);
+  const r = await build(A, { REPOSITORY_URL: o.origin, DID_PREVIOUS_DIR: await copyOf(o.trees[A].tree), URL: `https://${A}` });
+  assert.equal(r.status, 1, r.stderr);
+  const faults = lines(r.stderr).filter((l) => l.startsWith("FAULT ")).sort();
+  assert.deepEqual(faults, ["FAULT .gitattributes: not a data file", "FAULT netlify.toml: not a data file"]);
+});
+
+test("a stale output directory is replaced, not merged into", async () => {
+  const a = await dataTree(A);
+  const dist = join(await mkdtemp(join(tmpdir(), "did-dist-")), "dist");
+  await mkdir(dist);
+  await writeFile(join(dist, "stale.html"), "stale\n");
+  const r = await build(A, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: await copyOf(a.tree), URL: `https://${A}`, DID_DIST: dist });
+  assert.equal(r.status, 0, r.stderr);
+  await assert.rejects(stat(join(dist, "stale.html")));
+  assert.equal(await readFile(join(dist, DOCUMENT), "utf8"), await docOf(a.tree));
 });

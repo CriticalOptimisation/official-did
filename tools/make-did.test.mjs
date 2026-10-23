@@ -227,6 +227,20 @@ test("DID_LOG: a new revocation record carries it as its `log`", async () => {
   assert.equal(JSON.parse(await readFile(recordPath(site, tp), "utf8")).log, "https://log.example.test/");
 });
 
+test("--did and --log take precedence over DID_DOMAIN and DID_LOG", async () => {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey();
+  const env = { ...process.env, DID_DOMAIN: "other.test", DID_LOG: "https://log.other.test/" };
+  const gen = (args, jwk) => spawnSync(process.execPath, [SCRIPT, "--did", DID, "--site", site, "--out", docPath(site), ...args],
+    { input: jwk ? JSON.stringify(jwk) : "", encoding: "utf8", cwd: REPO, env });
+  ok(gen(["--from-private", "-"], a.jwk), "first key");
+  ok(gen(["--from-private", "-", "--append"], b.jwk), "second key");
+  assert.equal(JSON.parse(await readFile(docPath(site), "utf8")).id, DID);
+  const tp = await thumbprintOf(a.jwk);
+  ok(gen(["--revoke", tp, "--compromised-after", "2026-01-01T00:00:00Z", "--log", "https://log.example.test/"]), "revoke");
+  assert.equal(JSON.parse(await readFile(recordPath(site, tp), "utf8")).log, "https://log.example.test/");
+});
+
 test("--append: a second key goes after the first, whose entries stay byte-identical", async () => {
   const site = await newSite();
   const a = await freshKey(), b = await freshKey();
