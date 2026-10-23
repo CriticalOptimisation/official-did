@@ -1,144 +1,192 @@
 // tools/netlify-build.test.mjs — the deploy-time check: nothing goes live that
-// does not extend the state that is live now.
+// does not extend the state that is live now, and each domain's build uses
+// that domain's own data and live state, never another's (#8).
 //
-// The "live" state is served by a local HTTP server, standing for $URL. The
-// live site has no directory listing: the check finds the records through the
-// revoked entries of the live document, at $URL + the path of its `service`
-// endpoint.
+// The data tree comes from DID_DATA_DIR, or from the branch data/$DID_DOMAIN
+// of $REPOSITORY_URL (a local bare repository here). The "live" state is
+// DID_PREVIOUS_DIR, or is served by a local HTTP server standing for $URL;
+// the domain of such a server is its host name, `localhost`. The live site
+// has no directory listing: the check finds the records through the revoked
+// entries of the live document, at $URL + the path of its `service` endpoint.
 //
 // Run with: node --test tools/netlify-build.test.mjs
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync, spawn } from "node:child_process";
-import { readFile, writeFile, mkdtemp, mkdir, cp } from "node:fs/promises";
-import { createServer } from "node:http";
-import { webcrypto as crypto } from "node:crypto";
+import { readFile, writeFile, mkdtemp, mkdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname, normalize } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import {
+  A, B, LOCAL, REDIRECT, NETLIFY_BUILD, DOCUMENT,
+  dataTree, copyOf, makeDid, freshJwk, twoDomainOrigin, serve, run, git, hasLine, lines,
+} from "./fixtures/domains.mjs";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const BUILD = join(HERE, "netlify-build.sh");
-const MAKE_DID = join(HERE, "make-did.mjs");
-const DID = "did:web:example.test";
-
-const lines = (text) => text.split("\n");
-const hasLine = (text, re) => lines(text).some((l) => re.test(l));
-
-async function freshJwk() {
-  const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
-  return crypto.subtle.exportKey("jwk", pair.privateKey);
+/** Runs the build for `domain`, with its own output directory; resolves to { status, stderr, dist }. */
+async function build(domain, env) {
+  const dist = join(await mkdtemp(join(tmpdir(), "did-dist-")), "dist");
+  const vars = { DID_DIST: dist, ...(domain ? { DID_DOMAIN: domain } : {}),
+    DID_REDIRECT: REDIRECT[domain] ?? "https://www.owner.example.test/", ...env };
+  return { ...await run("sh", [NETLIFY_BUILD], vars), dist };
 }
-async function thumbprintOf(jwk) {
-  const m = { crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y };
-  return Buffer.from(await crypto.subtle.digest("SHA-256",
-    Buffer.from(JSON.stringify(m, Object.keys(m).sort())))).toString("base64url");
-}
+const builtDoc = (r) => readFile(join(r.dist, DOCUMENT), "utf8");
+const docOf = (tree) => readFile(join(tree, DOCUMENT), "utf8");
 
-/** A site with two keys, the first revoked; plus its config. */
-async function siteWithRevocation() {
-  const root = await mkdtemp(join(tmpdir(), "did-build-"));
-  const config = join(root, "did.config.json");
-  await writeFile(config, JSON.stringify({ did: DID }) + "\n");
-  const site = join(root, "public");
-  await mkdir(join(site, ".well-known"), { recursive: true });
-  const run = (args, jwk) => {
-    const r = spawnSync(process.execPath, [MAKE_DID, "--config", config, "--site", site,
-      "--out", join(site, ".well-known", "did.json"), ...args],
-    { input: jwk ? JSON.stringify(jwk) : "", encoding: "utf8" });
-    assert.equal(r.status, 0, r.stderr);
-  };
-  const a = await freshJwk(), b = await freshJwk();
-  run(["--from-private", "-"], a);
-  run(["--from-private", "-", "--append"], b);
-  run(["--revoke", await thumbprintOf(a), "--compromised-after", "2026-01-01T00:00:00Z"]);
-  return { root, config, site, run, tpA: await thumbprintOf(a), tpB: await thumbprintOf(b) };
-}
-
-async function copyOf(site) {
-  const copy = join(await mkdtemp(join(tmpdir(), "did-copy-")), "public");
-  await cp(site, copy, { recursive: true });
-  return copy;
-}
-
-/** Serves `dir` as a static site on 127.0.0.1; resolves to { url, close }. */
-function serve(dir) {
-  const server = createServer(async (req, res) => {
-    const path = normalize(decodeURIComponent(new URL(req.url, "http://x").pathname));
-    try {
-      const body = await readFile(join(dir, path));
-      res.writeHead(200).end(body);
-    } catch { res.writeHead(404).end("not found"); }
-  });
-  return new Promise((resolve) => server.listen(0, "127.0.0.1", () =>
-    resolve({ url: `http://127.0.0.1:${server.address().port}`, close: () => server.close() })));
-}
-
-/**
- * Runs the check asynchronously: the local server lives in this process, so a
- * synchronous spawn would block it.
- */
-function build(env) {
-  return new Promise((resolve) => {
-    const child = spawn("sh", [BUILD], {
-      env: { ...process.env, NODE: process.execPath, ...env },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "", stderr = "";
-    child.stdout.on("data", (d) => { stdout += d; });
-    child.stderr.on("data", (d) => { stderr += d; });
-    child.on("close", (status) => resolve({ status, stdout, stderr }));
-  });
-}
-
-test("an extension of the live state passes", async () => {
-  const s = await siteWithRevocation();
-  const live = await copyOf(s.site);
-  s.run(["--from-private", "-", "--append"], await freshJwk());
-  const r = await build({ DID_SITE: s.site, DID_CONFIG: s.config, DID_PREVIOUS_DIR: live });
+test("an extension of the live state passes, and the built site carries the data tree's document", async () => {
+  const a = await dataTree(A);
+  const live = await copyOf(a.tree);
+  makeDid(A, a.tree, ["--from-private", "-", "--append"], await freshJwk());
+  const r = await build(A, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: live, URL: `https://${A}` });
   assert.equal(r.status, 0, r.stderr);
   assert.ok(hasLine(r.stderr, /^netlify-build: OK$/), r.stderr);
+  assert.equal(await builtDoc(r), await docOf(a.tree));
 });
 
 test("a build that removes an entry of the live state fails", async () => {
-  const s = await siteWithRevocation();
-  const live = await copyOf(s.site);
-  const doc = JSON.parse(await readFile(join(s.site, ".well-known", "did.json"), "utf8"));
-  doc.verificationMethod = doc.verificationMethod.filter((m) => !m.id.endsWith(s.tpB));
+  const a = await dataTree(A);
+  const live = await copyOf(a.tree);
+  // The control: the same build, before the removal, passes.
+  const control = await build(A, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: live, URL: `https://${A}` });
+  assert.equal(control.status, 0, control.stderr);
+  const doc = JSON.parse(await docOf(a.tree));
+  doc.verificationMethod = doc.verificationMethod.filter((m) => !m.id.endsWith(a.tp2));
   doc.assertionMethod = doc.verificationMethod.map((m) => m.id);
-  await writeFile(join(s.site, ".well-known", "did.json"), JSON.stringify(doc, null, 2) + "\n");
-  const r = await build({ DID_SITE: s.site, DID_CONFIG: s.config, DID_PREVIOUS_DIR: live });
+  await writeFile(join(a.tree, DOCUMENT), JSON.stringify(doc, null, 2) + "\n");
+  const r = await build(A, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: live, URL: `https://${A}` });
   assert.notEqual(r.status, 0);
   assert.ok(hasLine(r.stderr, /^FAULT .+: removed since the previous state$/), r.stderr);
 });
 
 test("the live state is fetched from $URL, records included, through the live document", async () => {
-  const s = await siteWithRevocation();
-  const live = await copyOf(s.site);
+  const t = await dataTree(LOCAL);
+  const live = await copyOf(t.tree);
   const server = await serve(live);
   try {
     // The build moves compromisedAfter later in the record: only the fetched
     // live record can reveal it.
-    const path = join(s.site, "revocations", `${s.tpA}.json`);
+    const path = join(t.tree, "revocations", `${t.tp1}.json`);
     const rec = JSON.parse(await readFile(path, "utf8"));
     rec.compromisedAfter = "2026-02-01T00:00:00Z";
     await writeFile(path, JSON.stringify(rec, null, 2) + "\n");
-    const r = await build({ DID_SITE: s.site, DID_CONFIG: s.config, URL: server.url });
+    const r = await build(LOCAL, { DID_DATA_DIR: t.tree, URL: server.url });
     assert.notEqual(r.status, 0);
     assert.ok(hasLine(r.stderr, /^FAULT .+: compromisedAfter moved later .+$/), r.stderr);
   } finally { server.close(); }
 });
 
 test("no reachable live state: the build fails, unless DID_ALLOW_NO_PREVIOUS=1", async () => {
-  const s = await siteWithRevocation();
-  const unreachable = "http://127.0.0.1:9";
-  const r = await build({ DID_SITE: s.site, DID_CONFIG: s.config, URL: unreachable });
+  const t = await dataTree(LOCAL);
+  const unreachable = `http://${LOCAL}:9`;
+  const r = await build(LOCAL, { DID_DATA_DIR: t.tree, URL: unreachable });
   assert.notEqual(r.status, 0);
   assert.ok(hasLine(r.stderr,
-    /^netlify-build: cannot fetch the live state from http:\/\/127\.0\.0\.1:9; set DID_ALLOW_NO_PREVIOUS=1 for a first deploy$/), r.stderr);
+    /^netlify-build: cannot fetch the live state from http:\/\/localhost:9; set DID_ALLOW_NO_PREVIOUS=1 for a first deploy$/), r.stderr);
 
-  const ok = await build({ DID_SITE: s.site, DID_CONFIG: s.config, URL: unreachable, DID_ALLOW_NO_PREVIOUS: "1" });
+  const ok = await build(LOCAL, { DID_DATA_DIR: t.tree, URL: unreachable, DID_ALLOW_NO_PREVIOUS: "1" });
   assert.equal(ok.status, 0, ok.stderr);
   assert.ok(hasLine(ok.stderr, /^netlify-build: no previous state \(DID_ALLOW_NO_PREVIOUS=1\)$/), ok.stderr);
+  assert.equal(await builtDoc(ok), await docOf(t.tree));
 });
+
+// --- several domains (#8) -------------------------------------------------------
+
+test("the data tree is the branch data/$DID_DOMAIN of $REPOSITORY_URL, and the build logs its commit", async () => {
+  const o = await twoDomainOrigin();
+  const live = await copyOf(o.trees[A].tree);
+  const r = await build(A, { REPOSITORY_URL: o.origin, DID_PREVIOUS_DIR: live, URL: `https://${A}` });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(await builtDoc(r), await docOf(o.trees[A].tree));
+  assert.ok(hasLine(r.stderr, new RegExp(`^netlify-build: data/${A.replaceAll(".", "\\.")} at ${o.trees[A].commit}$`)), r.stderr);
+});
+
+test("A's data checked against B's live state fails", async () => {
+  const a = await dataTree(A), b = await dataTree(B);
+  // The control: against A's own live state, the same build passes.
+  const control = await build(A, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: await copyOf(a.tree), URL: `https://${A}` });
+  assert.equal(control.status, 0, control.stderr);
+  const r = await build(A, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: b.tree, URL: `https://${A}` });
+  assert.notEqual(r.status, 0);
+  assert.ok(!hasLine(r.stderr, /^netlify-build: OK$/), r.stderr);
+});
+
+test("a build whose $URL is not on DID_DOMAIN is refused before anything is compared", async () => {
+  const a = await dataTree(A);
+  const r = await build(A, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: await copyOf(a.tree), URL: `https://${B}` });
+  assert.equal(r.status, 1, r.stderr);
+  assert.ok(hasLine(r.stderr, new RegExp(
+    `^netlify-build: URL host ${B.replaceAll(".", "\\.")} is not DID_DOMAIN ${A.replaceAll(".", "\\.")}$`)), r.stderr);
+});
+
+test("a build without DID_DOMAIN is refused", async () => {
+  const a = await dataTree(A);
+  const r = await build(null, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: await copyOf(a.tree), URL: `https://${A}` });
+  assert.equal(r.status, 1, r.stderr);
+  assert.ok(hasLine(r.stderr, /^netlify-build: DID_DOMAIN is not set$/), r.stderr);
+});
+
+// --- edge cases -------------------------------------------------------------------
+
+test("a domain without a data branch is refused, and names the repository", async () => {
+  const o = await twoDomainOrigin();
+  const C = "c.example.test";
+  const r = await build(C, { REPOSITORY_URL: o.origin, DID_PREVIOUS_DIR: await copyOf(o.trees[A].tree), URL: `https://${C}` });
+  assert.equal(r.status, 1, r.stderr);
+  assert.deepEqual(lines(r.stderr.trimEnd()), [`netlify-build: no branch data/${C} in ${o.origin}`]);
+});
+
+test("the refusals before the check: DID_REDIRECT, URL, an upper-case DID_DOMAIN", async () => {
+  const a = await dataTree(A);
+  const base = { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: await copyOf(a.tree), URL: `https://${A}` };
+  for (const [domain, env, message] of [
+    [A, { DID_REDIRECT: "" }, "netlify-build: DID_REDIRECT is not set"],
+    [A, { URL: "" }, "netlify-build: URL is not set"],
+    [A, { URL: "not a url" }, "netlify-build: URL not a url is not a URL"],
+    [A.toUpperCase(), { URL: `https://${A.toUpperCase()}` }, `netlify-build: DID_DOMAIN ${A.toUpperCase()} is not a lower-case host name`],
+    [`${A}..`, { URL: `https://${A}` }, `netlify-build: DID_DOMAIN ${A}.. is not a lower-case host name`],
+  ]) {
+    const r = await build(domain, { ...base, ...env });
+    assert.equal(r.status, 1, r.stderr);
+    assert.deepEqual(lines(r.stderr.trimEnd()), [message]);
+    await assert.rejects(stat(r.dist), "nothing is built");
+  }
+});
+
+test("a port in $URL is not compared: the host name is", async () => {
+  const a = await dataTree(A);
+  const r = await build(A, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: await copyOf(a.tree), URL: `https://${A}:8443/` });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(hasLine(r.stderr, /^netlify-build: OK$/), r.stderr);
+});
+
+test("a data branch's .gitattributes cannot hide a file from the build", async () => {
+  const o = await twoDomainOrigin();
+  // A commit on data/A that adds a netlify.toml and hides it, and itself, from `git archive`.
+  const work = join(o.root, "hide");
+  git(o.root, "clone", "-q", "--single-branch", "-b", `data/${A}`, o.origin, work);
+  git(work, "config", "user.email", "test@example.invalid");
+  git(work, "config", "user.name", "test");
+  await writeFile(join(work, ".gitattributes"), "netlify.toml export-ignore\n.gitattributes export-ignore\n");
+  await writeFile(join(work, "netlify.toml"), '[build]\n  command = "true"\n');
+  git(work, "add", "-f", ".gitattributes", "netlify.toml");
+  git(work, "commit", "-qm", "hide");
+  git(work, "push", "-q", "origin", `data/${A}`);
+  const r = await build(A, { REPOSITORY_URL: o.origin, DID_PREVIOUS_DIR: await copyOf(o.trees[A].tree), URL: `https://${A}` });
+  assert.equal(r.status, 1, r.stderr);
+  const faults = lines(r.stderr).filter((l) => l.startsWith("FAULT ")).sort();
+  assert.deepEqual(faults, ["FAULT .gitattributes: not a data file", "FAULT netlify.toml: not a data file"]);
+});
+
+test("a stale output directory is replaced, not merged into", async () => {
+  const a = await dataTree(A);
+  const dist = join(await mkdtemp(join(tmpdir(), "did-dist-")), "dist");
+  await mkdir(dist);
+  await writeFile(join(dist, "stale.html"), "stale\n");
+  const r = await build(A, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: await copyOf(a.tree), URL: `https://${A}`, DID_DIST: dist });
+  assert.equal(r.status, 0, r.stderr);
+  await assert.rejects(stat(join(dist, "stale.html")));
+  assert.equal(await readFile(join(dist, DOCUMENT), "utf8"), await docOf(a.tree));
+});
+
+// --- Change History -------------------------------------------------------
+// | PR     | Summary                                                       |
+// |--------|---------------------------------------------------------------|
+// | #10    | the build fetches and checks data/$DID_DOMAIN (#8)            |
