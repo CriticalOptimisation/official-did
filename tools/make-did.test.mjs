@@ -24,8 +24,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "..");
 const SCRIPT = join(HERE, "make-did.mjs");
 
-// A neutral DID: tests name no real site. The published document is checked
-// with the DID of did.config.json, as the tool reads it.
+// A neutral DID: tests name no real site.
 const DID = "did:web:example.test";
 const DOMAIN = "example.test";
 
@@ -130,12 +129,17 @@ test("--check: the document rebuilt from the same key matches; another key does 
   assert.equal(run(other.jwk).status, 1);
 });
 
-test("the published document passes the continuous-integration check", async () => {
-  // No --did: the tool takes the DID from did.config.json.
-  const published = join(REPO, "public/.well-known/did.json");
-  const r = spawnSync(process.execPath, [SCRIPT, "--verify-file", published], { encoding: "utf8", cwd: REPO });
-  assert.equal(r.status, 0, r.stderr);
-});
+// REVIEW PLACEHOLDER (#8): the published documents left main for the data
+// branches, which the deploy-time build checks (tools/netlify-build.test.mjs).
+//   the published document passes the continuous-integration check
+//     -> netlify-build.test.mjs: an extension of the live state passes, and the built site carries the data tree's document
+//     -> netlify-build.test.mjs: the data tree is the branch data/$DID_DOMAIN of $REPOSITORY_URL, and the build logs its commit
+// test("the published document passes the continuous-integration check", async () => {
+//   // No --did: the tool takes the DID from did.config.json.
+//   const published = join(REPO, "public/.well-known/did.json");
+//   const r = spawnSync(process.execPath, [SCRIPT, "--verify-file", published], { encoding: "utf8", cwd: REPO });
+//   assert.equal(r.status, 0, r.stderr);
+// });
 
 // --- sites: a document, its records, and what may change between two states --
 //
@@ -191,16 +195,36 @@ function otsHeader(digest) {
   return Buffer.concat([magic, Buffer.from([0x01, 0x08]), digest]);
 }
 
-test("--config: the DID comes from the configuration file when --did is absent", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "did-config-"));
-  const config = join(dir, "did.config.json");
-  await writeFile(config, JSON.stringify({ did: "did:web:config.test" }) + "\n");
+// Converted in #8: the DID came from did.config.json; it now comes from the
+// Netlify project's variable DID_DOMAIN, and there is no default.
+test("DID_DOMAIN: the DID is did:web:$DID_DOMAIN when --did is absent; without either, a usage error", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "did-domain-"));
   const out = join(dir, "did.json");
   const { jwk } = await freshKey();
-  const r = spawnSync(process.execPath, [SCRIPT, "--config", config, "--from-private", "-", "--out", out],
-    { input: JSON.stringify(jwk), encoding: "utf8", cwd: REPO });
-  ok(r, "generation");
-  assert.equal(JSON.parse(await readFile(out, "utf8")).id, "did:web:config.test");
+  const gen = (env) => spawnSync(process.execPath, [SCRIPT, "--from-private", "-", "--out", out],
+    { input: JSON.stringify(jwk), encoding: "utf8", cwd: REPO, env: { ...process.env, ...env } });
+  ok(gen({ DID_DOMAIN: "domain.test" }), "generation");
+  assert.equal(JSON.parse(await readFile(out, "utf8")).id, "did:web:domain.test");
+
+  const env = { ...process.env };
+  delete env.DID_DOMAIN;
+  const none = spawnSync(process.execPath, [SCRIPT, "--from-private", "-", "--out", join(dir, "none.json")],
+    { input: JSON.stringify(jwk), encoding: "utf8", cwd: REPO, env });
+  assert.equal(none.status, 2, none.stderr);
+  assert.ok(hasLine(none.stderr, /^no DID: give --did, or set DID_DOMAIN$/), none.stderr);
+});
+
+test("DID_LOG: a new revocation record carries it as its `log`", async () => {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], a.jwk), "first key");
+  ok(onSite(site, ["--from-private", "-", "--append"], b.jwk), "second key");
+  const tp = await thumbprintOf(a.jwk);
+  const r = spawnSync(process.execPath,
+    [SCRIPT, "--did", DID, "--site", site, "--out", docPath(site), "--revoke", tp, "--compromised-after", "2026-01-01T00:00:00Z"],
+    { encoding: "utf8", cwd: REPO, env: { ...process.env, DID_LOG: "https://log.example.test/" } });
+  ok(r, "revoke");
+  assert.equal(JSON.parse(await readFile(recordPath(site, tp), "utf8")).log, "https://log.example.test/");
 });
 
 test("--append: a second key goes after the first, whose entries stay byte-identical", async () => {

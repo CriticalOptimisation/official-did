@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyRevocationRecords — checking a credential signed by a revoked key</title>
+<meta name="description" content="How a did:web issuer revokes a compromised signing key without making it unusable for evidence, and how anyone can check by themselves whether a credential signed by that key was issued before the compromise.">
+<link rel="canonical" href="https://natixar.pro/doc/keyrevocationrecords">
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, sans-serif; margin: 3rem auto; max-width: 46rem; padding: 0 1rem; }
+  code, pre { font: 14px/1.5 ui-monospace, monospace; }
+  pre { overflow-x: auto; padding: .75rem; border: 1px solid #8884; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #8884; padding: .3rem .5rem; text-align: left; vertical-align: top; }
+  h2 { margin-top: 2.2rem; }
+</style>
+
+<h1 id="KeyRevocationRecords">KeyRevocationRecords</h1>
+
+<p>A <strong>key revocation record</strong> tells a verifier three things about a
+signing key that its issuer has revoked: what the original public key was, from
+when it must no longer be trusted, and which credentials it is proven to have
+signed <em>before</em> that time. It lets anyone tell, among credentials that
+fail to verify because their key was revoked, the good ones from the
+suspect ones, without asking the issuer.</p>
+
+<p>This page is the definition of the DID service type
+<code>KeyRevocationRecords</code> and of the record format. The issuer's DID
+document maps the term to this page in its <code>@context</code>.</p>
+
+<h2 id="why">Why revoked keys are not simply removed</h2>
+
+<p>When a signing key is compromised, whoever holds it can sign anything, and
+can write any creation date into what they sign. A credential's own date proves
+nothing. So every credential signed by a compromised key must stop verifying,
+the genuine ones too, until each is shown good by evidence the thief cannot
+produce, and re-issued under a new key.</p>
+
+<p>Removing the key from the DID document would achieve the first part, but
+would also make a genuine credential indistinguishable from one signed by a
+random key, and would destroy the evidence needed for the second. Instead, the
+issuer:</p>
+<ol>
+  <li>keeps the key's entry in the DID document, marks it <code>revoked</code>,
+    and replaces its public key by a <a href="#placeholder">placeholder</a> nobody
+    can sign for, so that every verifier rejects it, including verifiers that
+    ignore <code>revoked</code>;</li>
+  <li>publishes the original key, and the evidence, in a
+    <a href="#record">revocation record</a>, which generic verifiers never read
+    and which cannot be used to accept a forgery.</li>
+</ol>
+
+<h2 id="entry">The revoked entry in the DID document</h2>
+
+<pre>{
+  "id": "did:web:&lt;domain&gt;#&lt;thumbprint&gt;",
+  "type": "JsonWebKey",
+  "controller": "did:web:&lt;domain&gt;",
+  "publicKeyJwk": { "kty": "EC", "crv": "P-256", "x": "&lt;placeholder&gt;", "y": "&lt;placeholder&gt;" },
+  "revoked": "2026-10-09T12:00:00Z"
+}</pre>
+
+<ul>
+  <li><code>revoked</code> is the property of
+    <a href="https://www.w3.org/TR/cid-1.0/">W3C Controlled Identifiers v1.0</a>:
+    the time from which the key MUST NOT be used. Verifiers that implement it
+    reject any proof made with the key.</li>
+  <li><code>&lt;thumbprint&gt;</code> is the
+    <a href="https://www.rfc-editor.org/rfc/rfc7638">RFC 7638</a> thumbprint of the
+    <strong>original</strong> key. It stays in the identifier: it commits to that
+    key.</li>
+  <li>Every entry of the document that carried the key, under its thumbprint
+    and under any logical name such as <code>#key-1</code>, is revoked the same
+    way, at the same time.</li>
+</ul>
+
+<h3 id="placeholder">The placeholder key</h3>
+
+<p>The placeholder is a valid P-256 point whose private key nobody knows,
+derived deterministically from the original thumbprint by
+<a href="https://www.rfc-editor.org/rfc/rfc9380">RFC 9380</a> hash-to-curve:</p>
+<table>
+  <tr><th>suite</th><td><code>P256_XMD:SHA-256_SSWU_RO_</code></td></tr>
+  <tr><th>DST</th><td><code>DID-WEB-REVOKED-V1_P256_XMD:SHA-256_SSWU_RO_</code></td></tr>
+  <tr><th>msg</th><td>the thumbprint, as ASCII</td></tr>
+  <tr><th><code>x</code>, <code>y</code></th><td>the point's coordinates, 32 bytes big-endian, base64url without padding</td></tr>
+</table>
+<p>Because the point is valid, every library imports it, and every signature
+check against it fails. Because it is deterministic, anyone can recompute it:
+an entry carrying any other key under a revoked identifier is not a
+revocation.</p>
+
+<h2 id="service">Finding the records</h2>
+
+<p>The DID document announces where its records are:</p>
+<pre>"service": [{
+  "id": "did:web:&lt;domain&gt;#revocations",
+  "type": "KeyRevocationRecords",
+  "serviceEndpoint": "https://&lt;domain&gt;/revocations/"
+}]</pre>
+<p>The record of the key with thumbprint <code>T</code> is at
+<code>&lt;serviceEndpoint&gt;T.json</code>. Its timestamp proofs are next to it,
+under <code>&lt;serviceEndpoint&gt;T/</code>. The endpoint may move. When it
+does, every record of the old endpoint must be at the new one, under the rules
+below.</p>
+
+<h2 id="record">The revocation record</h2>
+
+<pre>{
+  "id": "did:web:&lt;domain&gt;#&lt;thumbprint&gt;",
+  "publicKeyJwk": { "kty": "EC", "crv": "P-256", "x": "&lt;original&gt;", "y": "&lt;original&gt;" },
+  "revoked": "2026-10-09T12:00:00Z",
+  "compromisedAfter": "2026-10-09T03:00:00Z",
+  "log": "&lt;URL of the issuance log&gt;",
+  "anchors": [
+    { "treeSize": 18342, "rootHash": "&lt;base64url SHA-256&gt;",
+      "ots": "&lt;thumbprint&gt;/18342.ots", "tsr": "&lt;thumbprint&gt;/18342.tsr" }
+  ]
+}</pre>
+
+<table>
+  <tr><th>Field</th><th>Meaning and rules</th></tr>
+  <tr><td><code>id</code></td><td>the revoked identifier. Its fragment is the thumbprint of <code>publicKeyJwk</code> and the file name.</td></tr>
+  <tr><td><code>publicKeyJwk</code></td><td>the <strong>original</strong> public key. Self-certifying: its thumbprint must equal the fragment, so no other key can be substituted. Never changes.</td></tr>
+  <tr><td><code>revoked</code></td><td>the same value as in the DID document. Never changes.</td></tr>
+  <tr><td><code>compromisedAfter</code></td><td>the last moment the key is known to have been safe; at or before <code>revoked</code>. It may move <strong>earlier</strong> when a compromise is found to be older, never later.</td></tr>
+  <tr><td><code>log</code></td><td>the issuance log, an append-only Merkle log in which the issuer records every credential it signs. The log's own documentation specifies its proofs.</td></tr>
+  <tr><td><code>anchors</code></td><td>roots of the log, each timestamped independently of the issuer. <code>ots</code>: an <a href="https://opentimestamps.org/">OpenTimestamps</a> proof whose digest is <code>rootHash</code>. <code>tsr</code> (optional): an <a href="https://www.rfc-editor.org/rfc/rfc3161">RFC 3161</a> token over <code>rootHash</code>. Anchors are only ever added. An <code>.ots</code> file may be upgraded once Bitcoin confirms it, never changed to another digest.</td></tr>
+</table>
+
+<p>A record holds at least the last anchor timestamped at or before
+<code>compromisedAfter</code>, and the anchor taken at revocation.</p>
+
+<h2 id="check">Checking a credential signed by a revoked key</h2>
+
+<p>A credential is <strong>suspect</strong> when the verification method it
+names is an entry of the DID document marked <code>revoked</code>, its
+signature fails against that entry's placeholder key, and a revocation record
+exists for that thumbprint. A suspect credential is:</p>
+
+<dl>
+  <dt><strong>good</strong></dt>
+  <dd>when both hold:
+    <ol>
+      <li>its signature verifies against the record's <code>publicKeyJwk</code>, the
+        original key; and</li>
+      <li>the log proves its inclusion in a root listed in <code>anchors</code> whose
+        timestamp, from the OpenTimestamps proof or the RFC 3161 token, is at or before
+        <code>compromisedAfter</code>.</li>
+    </ol>
+    It existed before the compromise. The log is append-only, so inclusion in one
+    such root is enough.</dd>
+  <dt><strong>unproven</strong></dt>
+  <dd>otherwise. It may be genuine, issued in the last interval before the
+    compromise, but nothing public shows it. Only the issuer's own records can
+    say.</dd>
+</dl>
+
+<p>The issuer re-issues every good credential under a current key. A holder of a
+good credential can rely on it meanwhile, by this procedure. A credential that
+names a revoked key and is neither good nor re-issued must not be trusted.</p>
+
+<h2 id="guarantees">What the issuer guarantees</h2>
+<ul>
+  <li>No entry of the DID document is ever removed. An entry changes once, when
+    it is revoked, and only as described here.</li>
+  <li>A record's key and <code>revoked</code> never change; <code>compromisedAfter</code>
+    only moves earlier; anchors are only added.</li>
+  <li>These rules are checked before every deployment, against the document
+    that is live at that moment, and by a monitor outside the deployment
+    pipeline.</li>
+</ul>
+</html>

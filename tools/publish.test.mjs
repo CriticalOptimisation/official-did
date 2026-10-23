@@ -1,61 +1,41 @@
-// tools/publish.test.mjs — tools/publish.sh: one change, pushed to main,
-// re-applied from the new head for as long as other tools publish first.
+// tools/publish.test.mjs — tools/publish.sh: one change, pushed to the
+// domain's data branch data/$DID_DOMAIN, re-applied from the new head for as
+// long as other tools publish first, then the domain's build hook is called
+// (#8).
 //
-// Each test builds a bare "origin" and a working copy in a temporary
-// directory, and puts a fake `git` first on PATH. The fake delegates to the
-// real git, except for `push`, which it counts and, depending on the test,
-// rejects as a lost race, fails as an authentication error, or precedes with a
-// competing push. Private keys go through stdin only; the competitor uses
-// --new and discards its key.
+// Each test builds a bare "origin" holding `main` and the data branches of
+// two domains, A and B, and a single-branch clone of data/A as the working
+// copy. It puts a fake `git` first on PATH. The fake delegates to the real
+// git, except for `push`, which it counts and, depending on the test, rejects
+// as a lost race, fails as an authentication error, or precedes with a
+// competing push. A local HTTP server stands for the build hook. Private keys
+// go through stdin only; the competitor uses --new and discards its key.
 //
 // Run with: node --test tools/publish.test.mjs
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync, execFileSync } from "node:child_process";
-import { readFile, writeFile, mkdtemp, mkdir, chmod } from "node:fs/promises";
-import { webcrypto as crypto } from "node:crypto";
-import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFile, writeFile, mkdir, chmod } from "node:fs/promises";
+import { join } from "node:path";
+import {
+  A, B, PUBLISH, MAKE_DID, REAL_GIT, DOCUMENT,
+  twoDomainOrigin, headOf, git, freshJwk, hookServer, run, lines,
+} from "./fixtures/domains.mjs";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const PUBLISH = join(HERE, "publish.sh");
-const MAKE_DID = join(HERE, "make-did.mjs");
-const DID = "did:web:example.test";
-const REAL_GIT = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
-
-const lines = (text) => text.split("\n");
+const BRANCH = `data/${A}`;
 const matching = (text, re) => lines(text).filter((l) => re.test(l));
 
-function git(cwd, ...args) {
-  return execFileSync(REAL_GIT, args, { cwd, encoding: "utf8" });
-}
-
-/** origin (bare) seeded with one key; a working copy for publish.sh. */
+/** origin with A and B; `seed` and `work`, two single-branch clones of data/A. */
 async function setup() {
-  const root = await mkdtemp(join(tmpdir(), "did-publish-"));
-  const origin = join(root, "origin.git");
-  const seed = join(root, "seed");
-  const work = join(root, "work");
-  git(root, "init", "-q", "--bare", "-b", "main", origin);
-  git(root, "clone", "-q", origin, seed);
-  for (const dir of [seed]) {
-    git(dir, "config", "user.email", "test@example.invalid");
-    git(dir, "config", "user.name", "test");
+  const o = await twoDomainOrigin();
+  const seed = join(o.root, "seed-a");
+  const work = join(o.root, "work");
+  for (const [dir, who] of [[seed, "competitor"], [work, "publisher"]]) {
+    git(o.root, "clone", "-q", "--single-branch", "-b", BRANCH, o.origin, dir);
+    git(dir, "config", "user.email", `${who}@example.invalid`);
+    git(dir, "config", "user.name", who);
   }
-  await mkdir(join(seed, "public", ".well-known"), { recursive: true });
-  await writeFile(join(seed, "did.config.json"), JSON.stringify({ did: DID }) + "\n");
-  execFileSync(process.execPath, [MAKE_DID, "--config", join(seed, "did.config.json"),
-    "--site", join(seed, "public"), "--out", join(seed, "public", ".well-known", "did.json"), "--new"],
-  { stdio: ["ignore", "ignore", "pipe"] });
-  git(seed, "add", ".");
-  git(seed, "commit", "-qm", "seed");
-  git(seed, "push", "-q", "origin", "main");
-  git(root, "clone", "-q", origin, work);
-  git(work, "config", "user.email", "publisher@example.invalid");
-  git(work, "config", "user.name", "publisher");
-  return { root, origin, seed, work };
+  return { ...o, seed, work };
 }
 
 /**
@@ -77,7 +57,7 @@ for a in "$@"; do
       case '${mode}' in
         reject)
           echo "To origin"
-          printf '!\\tHEAD:refs/heads/main\\t[rejected] (fetch first)\\n'
+          printf '!\\tHEAD:refs/heads/${BRANCH}\\t[rejected] (fetch first)\\n'
           echo "Done"
           echo "error: failed to push some refs to 'origin'" >&2
           exit 1 ;;
@@ -104,22 +84,19 @@ async function loggerStub(root) {
   return { stub, log };
 }
 
-async function freshJwk() {
-  const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
-  return crypto.subtle.exportKey("jwk", pair.privateKey);
+/** Runs publish.sh for domain A, with a build hook that answers `hookStatus`. */
+async function publish(ctx, env, args, input = "", hookStatus = 200) {
+  const hook = await hookServer(hookStatus);
+  try {
+    const r = await run("sh", [PUBLISH, ...args], {
+      DID_DOMAIN: A, DID_PUBLISH_WORKDIR: ctx.work, DID_PUBLISH_BUILD_HOOK: hook.url,
+      DID_PUBLISH_PAUSE_MAX: "0", ...env,
+    }, input);
+    return { ...r, hookCalls: hook.calls };
+  } finally { hook.close(); }
 }
 
-function publish(env, args, input) {
-  return spawnSync("sh", [PUBLISH, ...args], {
-    input, encoding: "utf8",
-    env: { ...process.env, NODE: process.execPath, DID_PUBLISH_PAUSE_MAX: "0", ...env },
-  });
-}
-
-async function originDoc(ctx) {
-  git(ctx.seed, "pull", "-q", "origin", "main");
-  return JSON.parse(await readFile(join(ctx.seed, "public", ".well-known", "did.json"), "utf8"));
-}
+const originDoc = (ctx) => JSON.parse(git(ctx.origin, "show", `${BRANCH}:${DOCUMENT}`));
 
 const ALERT = /^publish: still retrying after (\d+) rejected pushes \(.+\)$/;
 
@@ -127,9 +104,8 @@ test("lost races are retried without limit; one alert line, and one syslog call,
   const ctx = await setup();
   const { bin, count } = await fakeGit(ctx.root, { mode: "reject", times: 7 });
   const { stub, log } = await loggerStub(ctx.root);
-  const r = publish({
-    PATH: `${bin}:${process.env.PATH}`, DID_PUBLISH_WORKDIR: ctx.work,
-    DID_PUBLISH_ALERT_EVERY: "3", DID_PUBLISH_LOGGER: stub,
+  const r = await publish(ctx, {
+    PATH: `${bin}:${process.env.PATH}`, DID_PUBLISH_ALERT_EVERY: "3", DID_PUBLISH_LOGGER: stub,
   }, ["--from-private", "-", "--append"], JSON.stringify(await freshJwk()));
 
   assert.equal(r.status, 0, r.stderr);
@@ -137,19 +113,20 @@ test("lost races are retried without limit; one alert line, and one syslog call,
   assert.equal(lines((await readFile(log, "utf8")).trimEnd()).length, 2);
   assert.equal(matching(r.stderr, /^publish: published [0-9a-f]{40} after 7 rejected pushes$/).length, 1, r.stderr);
   assert.equal(Number(await readFile(count, "utf8")), 8);
-  assert.equal((await originDoc(ctx)).verificationMethod.length, 2);
+  assert.equal(originDoc(ctx).verificationMethod.length, 3);
 });
 
 test("an authentication failure is not a lost race: one attempt, then a stop", async () => {
   const ctx = await setup();
   const { bin, count } = await fakeGit(ctx.root, { mode: "auth", times: 99 });
-  const r = publish({ PATH: `${bin}:${process.env.PATH}`, DID_PUBLISH_WORKDIR: ctx.work },
+  const r = await publish(ctx, { PATH: `${bin}:${process.env.PATH}` },
     ["--from-private", "-", "--append"], JSON.stringify(await freshJwk()));
 
   assert.notEqual(r.status, 0);
   assert.equal(Number(await readFile(count, "utf8")), 1);
   assert.equal(matching(r.stderr, /^publish: push failed, not retried: fatal: Authentication failed for 'origin'$/).length, 1, r.stderr);
   assert.equal(matching(r.stderr, ALERT).length, 0);
+  assert.deepEqual(r.hookCalls, []);
 });
 
 test("a competitor publishes first, twice: the change is re-applied on its head, and both survive", async () => {
@@ -157,42 +134,77 @@ test("a competitor publishes first, twice: the change is re-applied on its head,
   // Before each of the first two pushes, the competitor appends a fresh key
   // from the seed clone and pushes it, so publish.sh genuinely loses the race.
   const competitor = [
-    `'${REAL_GIT}' -C '${ctx.seed}' pull -q origin main`,
-    `'${process.execPath}' '${MAKE_DID}' --config '${ctx.seed}/did.config.json' --site '${ctx.seed}/public' --out '${ctx.seed}/public/.well-known/did.json' --new --append > /dev/null 2>&1`,
+    `'${REAL_GIT}' -C '${ctx.seed}' pull -q origin '${BRANCH}'`,
+    `'${process.execPath}' '${MAKE_DID}' --did 'did:web:${A}' --site '${ctx.seed}' --out '${ctx.seed}/${DOCUMENT}' --new --append > /dev/null 2>&1`,
     `'${REAL_GIT}' -C '${ctx.seed}' commit -qam competitor`,
-    `'${REAL_GIT}' -C '${ctx.seed}' push -q origin main`,
+    `'${REAL_GIT}' -C '${ctx.seed}' push -q origin '${BRANCH}'`,
   ].join("\n      ");
   const { bin } = await fakeGit(ctx.root, { mode: "real", times: 2, before: competitor });
   const jwk = await freshJwk();
-  const r = publish({ PATH: `${bin}:${process.env.PATH}`, DID_PUBLISH_WORKDIR: ctx.work },
+  const r = await publish(ctx, { PATH: `${bin}:${process.env.PATH}` },
     ["--from-private", "-", "--append"], JSON.stringify(jwk));
 
   assert.equal(r.status, 0, r.stderr);
   assert.equal(matching(r.stderr, /^publish: published [0-9a-f]{40} after 2 rejected pushes$/).length, 1, r.stderr);
-  const doc = await originDoc(ctx);
-  // The seed key, two competitor keys, and ours: nothing was overwritten.
-  assert.equal(doc.verificationMethod.length, 4);
+  const doc = originDoc(ctx);
+  // The two keys of the fixture, two competitor keys, and ours: nothing was overwritten.
+  assert.equal(doc.verificationMethod.length, 5);
   const ours = { crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y };
   assert.ok(doc.verificationMethod.some((m) => m.publicKeyJwk.x === ours.x && m.publicKeyJwk.y === ours.y));
 });
 
-test("nothing to publish: the change is already there, no push", async () => {
+test("nothing to publish: the change is already there, no push, no build", async () => {
   const ctx = await setup();
   const { bin, count } = await fakeGit(ctx.root, { mode: "real", times: 0 });
-  const r = publish({ PATH: `${bin}:${process.env.PATH}`, DID_PUBLISH_WORKDIR: ctx.work }, ["--normalize"], "");
-  // The seed was written by the current tool, so normalizing changes nothing.
+  const r = await publish(ctx, { PATH: `${bin}:${process.env.PATH}` }, ["--normalize"]);
+  // The fixture was written by the current tool, so normalizing changes nothing.
   assert.equal(r.status, 0, r.stderr);
   assert.equal(matching(r.stderr, /^publish: nothing to publish$/).length, 1, r.stderr);
   assert.equal(await readFile(count, "utf8").catch(() => "0"), "0");
+  assert.deepEqual(r.hookCalls, []);
 });
 
 test("a make-did.mjs failure is not a lost race: no push, no retry", async () => {
   const ctx = await setup();
   const { bin, count } = await fakeGit(ctx.root, { mode: "real", times: 0 });
-  const r = publish({ PATH: `${bin}:${process.env.PATH}`, DID_PUBLISH_WORKDIR: ctx.work },
-    ["--revoke", "A".repeat(43), "--compromised-after", "2026-01-01T00:00:00Z"], "");
+  const r = await publish(ctx, { PATH: `${bin}:${process.env.PATH}` },
+    ["--revoke", "A".repeat(43), "--compromised-after", "2026-01-01T00:00:00Z"]);
   assert.notEqual(r.status, 0);
   assert.equal(matching(r.stderr, /^FAULT A{43}: no entry with this thumbprint$/).length, 1, r.stderr);
   assert.equal(matching(r.stderr, /^publish: make-did\.mjs failed, not retried$/).length, 1, r.stderr);
   assert.equal(await readFile(count, "utf8").catch(() => "0"), "0");
+});
+
+// --- several domains (#8) -------------------------------------------------------
+
+test("publishing for A changes data/A only: data/B and main are untouched", async () => {
+  const ctx = await setup();
+  const before = { main: headOf(ctx.origin, "main"), a: headOf(ctx.origin, BRANCH), b: headOf(ctx.origin, `data/${B}`) };
+  const r = await publish(ctx, {}, ["--from-private", "-", "--append"], JSON.stringify(await freshJwk()));
+  assert.equal(r.status, 0, r.stderr);
+  assert.notEqual(headOf(ctx.origin, BRANCH), before.a);
+  assert.equal(headOf(ctx.origin, `data/${B}`), before.b);
+  assert.equal(headOf(ctx.origin, "main"), before.main);
+  assert.equal(originDoc(ctx).verificationMethod.length, 3);
+});
+
+test("after the accepted push, the build hook is called once, with a POST", async () => {
+  const ctx = await setup();
+  const r = await publish(ctx, {}, ["--from-private", "-", "--append"], JSON.stringify(await freshJwk()));
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(matching(r.stderr, /^publish: published [0-9a-f]{40} after 0 rejected pushes$/).length, 1, r.stderr);
+  assert.deepEqual(r.hookCalls, ["POST"]);
+});
+
+test("a failed build hook: published, not deployed; one alert, exit 3", async () => {
+  const ctx = await setup();
+  const { stub, log } = await loggerStub(ctx.root);
+  const r = await publish(ctx, { DID_PUBLISH_LOGGER: stub },
+    ["--from-private", "-", "--append"], JSON.stringify(await freshJwk()), 500);
+  assert.equal(r.status, 3, r.stderr);
+  const head = headOf(ctx.origin, BRANCH);
+  assert.equal(matching(r.stderr, new RegExp(`^publish: published ${head}, not deployed: build hook failed \\(.+\\)$`)).length, 1, r.stderr);
+  assert.equal(lines((await readFile(log, "utf8")).trimEnd()).length, 1);
+  assert.deepEqual(r.hookCalls, ["POST"]);
+  assert.equal(originDoc(ctx).verificationMethod.length, 3);
 });

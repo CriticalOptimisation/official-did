@@ -1,20 +1,34 @@
-// tools/site.test.mjs — what `public/` declares to crawlers and resolvers.
+// tools/site.test.mjs — what a domain's site declares to crawlers and resolvers.
 //
-// Netlify publishes `public/` as it is: nothing is built, so these files ARE
-// the behaviour. The tests read them as Netlify does, without network, and
-// check that the site asks not to be indexed without breaking the headers a
-// resolver needs on the DID document.
+// Netlify publishes dist/, which tools/build-site.mjs assembles from public/
+// and the domain's data (#8). The tests build the site of a fixture domain as
+// the Netlify build would, read the result as Netlify serves it, without
+// network, and check that the site asks not to be indexed without breaking the
+// headers a resolver needs on the DID document.
 //
 // Run with: node --test tools/site.test.mjs
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
-import { join, dirname, resolve, relative, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFile, readdir, mkdtemp } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join, relative, sep } from "node:path";
+import { A, REDIRECT, REPO, BUILD_SITE, dataTree } from "./fixtures/domains.mjs";
 
-const PUBLIC = resolve(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const DID_PATH = "/.well-known/did.json";
+const DOMAIN = A;
+
+/** The site of the fixture domain, built as Netlify builds it; null if the build fails. */
+async function builtSite() {
+  const out = join(await mkdtemp(join(tmpdir(), "did-site-")), "dist");
+  const r = spawnSync(process.execPath, [BUILD_SITE, "--data", (await dataTree(DOMAIN)).tree, "--out", out],
+    { env: { ...process.env, DID_DOMAIN: DOMAIN, DID_REDIRECT: REDIRECT[DOMAIN] }, encoding: "utf8" });
+  if (r.status !== 0) { console.error(`build-site.mjs failed: ${r.stderr}`); return null; }
+  return out;
+}
+const SITE = await builtSite();
+const PUBLIC = SITE ?? join(tmpdir(), "did-site-not-built");
 
 const read = (name) => readFile(join(PUBLIC, name), "utf8");
 
@@ -29,7 +43,7 @@ const indexable = (path) => INDEXABLE.some((prefix) => path.startsWith(prefix));
 const DOC_SAMPLES = ["/doc/keyrevocationrecords", "/doc/keyrevocationrecords.html"];
 
 /**
- * Every path Netlify serves from `public/`: one per file, `/` for index.html,
+ * Every path Netlify serves from the built site: one per file, `/` for index.html,
  * and the extensionless form of each `.html` file. `_headers` is Netlify's
  * configuration, not served.
  */
@@ -273,11 +287,13 @@ test("_headers: a path pattern matches whole paths only", () => {
 
 // --- the site's configuration, revocation records, documentation -------------
 
-const REPO_ROOT = resolve(PUBLIC, "..");
-const config = async () => JSON.parse(await readFile(join(REPO_ROOT, "did.config.json"), "utf8"));
+const REPO_ROOT = REPO;
+// Converted in #8: the DID came from did.config.json; it is now
+// did:web:$DID_DOMAIN, the Netlify project's variable.
+const config = async () => ({ did: `did:web:${DOMAIN}` });
 const domainOf = (did) => did.replace(/^did:web:/, "").split(":")[0];
 
-test("did.config.json names the DID that the published document carries", async () => {
+test("the built document carries did:web:$DID_DOMAIN", async () => {
   const { did } = await config();
   assert.match(did, /^did:web:[a-z0-9.-]+$/);
   assert.equal(JSON.parse(await read(".well-known/did.json")).id, did);
@@ -295,9 +311,10 @@ test("the published document announces its revocation records and maps the type 
     c.KeyRevocationRecords === `https://${domain}/doc/keyrevocationrecords#KeyRevocationRecords`));
 });
 
-test("Netlify's build runs the deploy-time check", async () => {
+test("Netlify's build runs the deploy-time check, and publishes the site it built", async () => {
   const toml = await readFile(join(REPO_ROOT, "netlify.toml"), "utf8");
   assert.ok(toml.split("\n").some((l) => /^\s*command = "sh tools\/netlify-build\.sh"$/.test(l)), "build command");
+  assert.ok(toml.split("\n").some((l) => /^\s*publish = "dist"$/.test(l)), "publish directory");
 });
 
 const RECORD_PATHS = {
@@ -351,14 +368,37 @@ test("sitemap.xml lists exactly the canonical URLs of the pages under /doc/, and
   assert.ok(robots.includes(`Sitemap: https://${domainOf(did)}/sitemap.xml`), "Sitemap line");
 });
 
-test("no tracked file under tools/ names a site: site values live in did.config.json", async () => {
-  // Built from parts, so that this file does not contain the word itself.
-  const word = new RegExp(`\\b${["nati", "xar"].join("")}\\b`, "i");
+// The real domains served from this repository. Their names are built from
+// parts, so that this file does not contain them.
+const REAL_DOMAINS = [["nati", "xar"], ["cal", "cool"]].map((p) => p.join(""));
+
+/**
+ * Whether `text` names a real domain: some word of it, cut at every character
+ * that is not a letter or a digit, is one of REAL_DOMAINS, whatever its case.
+ * Whole words only, never substrings.
+ */
+const namesRealDomain = (text) => text.split(/[^A-Za-z0-9]+/).some((w) => REAL_DOMAINS.includes(w.toLowerCase()));
+
+// The check itself, against look-alikes. It passes before the change too: it
+// tests the test, not the repository.
+test("a real domain is recognised as a whole word only", () => {
+  const [d1, d2] = REAL_DOMAINS;
+  for (const [text, names] of [
+    [`${d1}.pro`, true], [`www.${d1}.com`, true], [`did:web:${d2}.ai`, true],
+    [`${d1.toUpperCase()} serves`, true], [`(${d2})`, true],
+    [`${d1}ish`, false], [`x${d2}`, false], [`${d1}2`, false], [`${d1.slice(0, -1)}`, false], ["example.test", false],
+  ]) assert.equal(namesRealDomain(text), names, text);
+});
+
+// Converted in #8 from "no tracked file under tools/ names a site: site values
+// live in did.config.json": main is neutral as a whole, and the site values are
+// the Netlify projects' variables. Test data under tools/fixtures/ may name them.
+test("no tracked file outside tools/fixtures/ names a real domain", async () => {
   const { execFileSync } = await import("node:child_process");
-  const files = execFileSync("git", ["ls-files", "tools"], { cwd: REPO_ROOT, encoding: "utf8" })
-    .split("\n").filter(Boolean);
+  const files = execFileSync("git", ["ls-files"], { cwd: REPO_ROOT, encoding: "utf8" })
+    .split("\n").filter(Boolean).filter((f) => !f.startsWith("tools/fixtures/"));
   assert.ok(files.length > 0);
   const offenders = [];
-  for (const f of files) if (word.test(await readFile(join(REPO_ROOT, f), "utf8"))) offenders.push(f);
+  for (const f of files) if (namesRealDomain(await readFile(join(REPO_ROOT, f), "utf8"))) offenders.push(f);
   assert.deepEqual(offenders, []);
 });
