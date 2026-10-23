@@ -1,28 +1,33 @@
-# Netlify — natixar.pro
+# Netlify — the build of every domain's project
 #
-# natixar.pro serves two things only: a redirect to natixar.com, and the DID
-# document of the issuer `did:web:natixar.pro`. Nothing is built: the payload is
-# static and versioned as it is served.
+# Each domain whose did:web document this repository stores has its own
+# Netlify project, and every project builds `main`: this file is always read
+# from `main`, never from a data branch. The project's variables name its
+# domain (DID_DOMAIN, DID_REDIRECT, DID_LOG); see README.md.
 #
-# The DID is served from Netlify rather than from Natixar's own servers on
-# purpose: credentials signed by Natixar must stay verifiable when Natixar's
-# servers are down, or gone.
+# The documents are served from Netlify rather than from their owners' own
+# servers on purpose: credentials must stay verifiable when those servers are
+# down, or gone.
 
 [build]
-  publish = "public"
-  # Nothing is generated: the build is the deploy-time check. It refuses any
-  # build that does not extend the state that is live now — no key entry
-  # dropped or altered, no revocation record lost — so that a bad push, by a
-  # person or a tool, never goes live. See tools/netlify-build.sh.
+  publish = "dist"
+  # The build fetches the domain's data branch, data/$DID_DOMAIN, assembles
+  # the site in dist/, and runs the deploy-time check. It refuses any build
+  # that does not extend the state that is live now — no key entry dropped or
+  # altered, no revocation record lost — so that a bad push, by a person or a
+  # tool, never goes live. See tools/netlify-build.sh.
   command = "sh tools/netlify-build.sh"
-  # Rebuild only when the payload, this configuration, or what the check runs
-  # changed — not for a change to the tests or the documentation.
+  # Rebuild only when the site, this configuration, or what the build runs
+  # changed — not for a change to the tests or the documentation. A change to
+  # the data never reaches this rule: tools/publish.sh starts its build with
+  # the project's build hook, which is never cancelled (INCOMING_HOOK_URL is
+  # set for those builds).
   #
   # `git diff --quiet` exits 0 when NOTHING changed, and Netlify cancels the
   # build on exit 0. On the first build $CACHED_COMMIT_REF is empty, the command
   # fails, the exit code is non-zero, and the build runs: the failure falls on
   # the safe side.
-  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- public netlify.toml did.config.json tools/make-did.mjs tools/hash-to-curve.mjs tools/ots-header.mjs tools/fetch-live.mjs tools/netlify-build.sh"
+  ignore = "[ -z \"${INCOMING_HOOK_URL:-}\" ] && git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- public netlify.toml tools/build-site.mjs tools/data-branch.gitignore tools/make-did.mjs tools/hash-to-curve.mjs tools/ots-header.mjs tools/fetch-live.mjs tools/netlify-build.sh"
 
 [build.environment]
   # The check uses fetch and WebCrypto from Node's standard library.

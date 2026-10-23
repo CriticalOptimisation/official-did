@@ -7,3 +7,5 @@
 .env
 node_modules/
 /.worktrees/
+/env/
+/dist/

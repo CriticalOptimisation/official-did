@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Produces, extends, revokes and checks a did:web DID document. The DID comes
-// from did.config.json at the repository root (or --config, or --did); no
+// from --did, or else is did:web:$DID_DOMAIN; there is no default, and no
 // site is named in this code.
 //
 // WHY A SCRIPT AND NOT A HAND-WRITTEN FILE. The published document and the key
@@ -19,9 +19,9 @@
 // revocation record. Any other change to an existing entry is refused. The
 // format is defined on /doc/keyrevocationrecords of the DID's own site.
 //
-// Usage (document: --out <file>, default public/.well-known/did.json; site
-// root: --site <dir>, default public — records live where the document's
-// `service` entry says):
+// Usage (document: --out <file>, default <site>/.well-known/did.json; site
+// root: --site <dir>, default the current directory, the root of a clone of
+// a data branch — records live where the document's `service` entry says):
 //   --new [--append]
 //       creates a P-256 pair, emits the private JWK on stdout, writes the document.
 //   --from-private <file|-> [--append]
@@ -47,8 +47,8 @@
 //       earlier state found in <site-dir> (document and records).
 //
 // Options:
-//   --config <file>        default did.config.json at the repository root
-//   --did <did>            overrides the config
+//   --did <did>            default did:web:$DID_DOMAIN
+//   --log <url>            the `log` of a new revocation record; default $DID_LOG
 //   --also-key-name <n>    ALSO publishes the key under the fragment #<n>;
 //                          `next` takes the next free key-<n>. A name
 //                          designates one key for good.
@@ -59,14 +59,11 @@ import { readFile, writeFile, mkdir, copyFile } from "node:fs/promises";
 // publication path that keeps the secret off the disk.
 import { text as readStdin } from "node:stream/consumers";
 import { webcrypto as crypto } from "node:crypto";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { revokedPlaceholder } from "./hash-to-curve.mjs";
 import { otsDigest } from "./ots-header.mjs";
 
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const DEFAULT_CONFIG = join(REPO, "did.config.json");
-const DEFAULT_SITE = "public";
+const DEFAULT_SITE = ".";
 const DOCUMENT = join(".well-known", "did.json");
 const SERVICE_TYPE = "KeyRevocationRecords";
 // A dateTimeStamp in UTC, as `revoked` and `compromisedAfter` are written.
@@ -402,9 +399,9 @@ async function revoke(did, doc, site, tp, faults) {
   if (!updated.some((m) => !("revoked" in m)))
     console.error(`WARNING ${did}: no active key remains; nothing verifies until a key is appended`);
 
-  const config = await readJson(arg("--config", DEFAULT_CONFIG)) ?? {};
+  const log = arg("--log") ?? process.env.DID_LOG;
   const record = { id: `${did}#${tp}`, publicKeyJwk: original, revoked, compromisedAfter,
-    ...(config.log ? { log: config.log } : {}), anchors: [] };
+    ...(log ? { log } : {}), anchors: [] };
   const dir = recordsDir(site, next, did);
   await mkdir(dir, { recursive: true });
   // The record first: the document must never point to a record that is not there.
@@ -458,10 +455,8 @@ async function anchor(did, doc, site, tp, faults) {
 }
 
 async function main() {
-  const configFile = arg("--config", DEFAULT_CONFIG);
-  const config = await readJson(configFile);
-  const did = arg("--did") ?? config?.did;
-  if (!did) { console.error(`no DID: give --did, or write it in ${configFile}`); process.exit(2); }
+  const did = arg("--did") ?? (process.env.DID_DOMAIN ? `did:web:${process.env.DID_DOMAIN}` : null);
+  if (!did) { console.error("no DID: give --did, or set DID_DOMAIN"); process.exit(2); }
   const site = arg("--site", DEFAULT_SITE);
   const out = arg("--out", join(site, DOCUMENT));
   const faults = new Faults();
