@@ -55,7 +55,8 @@ Every domain is served by its own Netlify project, and **every project builds
 4. assembles the site in `dist/`: the shared files of `public/`, the
    templates filled in with the project's variables, and the data;
 5. runs the deploy-time check (rule 3 below) against **that domain's own live
-   site**, `$URL`, after checking that the host of `$URL` is `DID_DOMAIN`.
+   site**, `$URL`, after checking that the host name of `$URL` is
+   `DID_DOMAIN`.
 
 Netlify reads `netlify.toml` from the branch it builds, and that file takes
 precedence over the project's own build settings. If a project built its data
@@ -78,8 +79,8 @@ each push. Netlify never cancels a build started by a hook.
 | `DID_LOG` | no | `https://log.example.org/` | the `log` written in new revocation records |
 
 One value, `DID_DOMAIN`, names both the DID and the branch, so the two cannot
-disagree. A port, as in `did:web:localhost%3A8443`, is written the same way in
-`DID_DOMAIN`.
+disagree. It is a host name: Netlify serves no other port than 443, so a
+`did:web` with a port has no place here.
 
 The variables hold no secret. Keep one file per domain, `env/<domain>.env`, in
 the ignored `env/` directory of your clone, and load it into the domain's
@@ -248,7 +249,7 @@ that header the read fails silently.
 | Variable | Meaning |
 |---|---|
 | `DID_DOMAIN`, `DID_REDIRECT`, `DID_LOG` | the project's variables, above |
-| `URL` | set by Netlify: the project's production URL, whose live state is compared. Its host must be `DID_DOMAIN` |
+| `URL` | set by Netlify: the project's production URL, whose live state is compared. Its host name must be `DID_DOMAIN`; a port, if any, is not compared |
 | `REPOSITORY_URL` | set by Netlify: the repository the data branch is fetched from |
 | `DID_DATA_DIR` | a local data tree, used instead of fetching `data/$DID_DOMAIN` (tests, local builds) |
 | `DID_PREVIOUS_DIR` | a local copy of the previous state, used instead of fetching `$URL` |
