@@ -1,0 +1,16 @@
+# The .gitignore of every data branch, which holds a byte-identical copy of
+# this file (tools/data-branch.gitignore on main). A data branch holds the DID
+# document and the revocation records, and nothing else: every other path is
+# ignored, so that a tool cannot commit a stray file by mistake. The build
+# refuses a data branch whose .gitignore differs from this file.
+/*
+!/.gitignore
+!/.well-known/
+/.well-known/*
+!/.well-known/did.json
+!/revocations/
+/revocations/**
+!/revocations/*/
+!/revocations/*.json
+!/revocations/*/*.ots
+!/revocations/*/*.tsr
