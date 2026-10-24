@@ -1,0 +1,34 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/jwk/v1",
+    "https://www.w3.org/ns/cid/v1",
+    {
+      "KeyRevocationRecords": "https://cabinet-medical-du-parc.care/doc/keyrevocationrecords#KeyRevocationRecords"
+    }
+  ],
+  "id": "did:web:cabinet-medical-du-parc.care",
+  "verificationMethod": [
+    {
+      "id": "did:web:cabinet-medical-du-parc.care#E6UzKh3VLrOPOykOiQDasxiQL7HC3cjNmWdxFsT0_lg",
+      "type": "JsonWebKey",
+      "controller": "did:web:cabinet-medical-du-parc.care",
+      "publicKeyJwk": {
+        "crv": "P-256",
+        "kty": "EC",
+        "x": "aHqbtxRrS-cZTf4WSgLf7Ipuc5-p2oItnXBBQOXNpf0",
+        "y": "3hyitfi8IKLKpBNA3WMC4ehjTpxZh3jKHYMtb2Fm7_0"
+      }
+    }
+  ],
+  "assertionMethod": [
+    "did:web:cabinet-medical-du-parc.care#E6UzKh3VLrOPOykOiQDasxiQL7HC3cjNmWdxFsT0_lg"
+  ],
+  "service": [
+    {
+      "id": "did:web:cabinet-medical-du-parc.care#revocations",
+      "type": "KeyRevocationRecords",
+      "serviceEndpoint": "https://cabinet-medical-du-parc.care/revocations/"
+    }
+  ]
+}
