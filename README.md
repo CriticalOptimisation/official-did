@@ -103,7 +103,12 @@ The format leaves a secret no field to hide in:
 - the file is named `<DID_DOMAIN>.env`, and nothing but `*.env` files can be
   tracked in the folder (`.gitignore`);
 - every line is `KEY=VALUE`, split at the first `=`: no comment, no blank
-  line, no `export`, no carriage return;
+  line, no `export`, no carriage return. The value is one character or more,
+  none of them a blank, a control character, a quote (`"`, `'`, `` ` ``) or a
+  backslash: a host name or a URL needs none, and the `.env` format would
+  read them. So a trailing space, which `new URL()` would silently drop, makes
+  the line a fault (`not KEY=VALUE`), and so does a value in quotes. The final
+  newline may be left out;
 - the keys are those that
   [`tools/netlify-env-keys.txt`](tools/netlify-env-keys.txt) lists as
   `required` (each once) or `optional` (at most once). Any other key is refused,
@@ -205,8 +210,10 @@ node tools/check-netlify-env.mjs <file>...   # the files given
 node tools/check-netlify-env.mjs --staged    # what the index holds under netlify-env-public/
 ```
 
-Each fault is one line, `FAULT <path>: <reason>`, and the exit code is `1`;
-`0` when every file passes. With `--staged`, it reads each staged file under
+Each fault is one line on stderr, `FAULT <path>: <reason>`, and the exit
+code is `1`; nothing is printed and the exit code is `0` when every file
+passes. Every fault of every file is reported, the faults of the lines first,
+in order, then those of the file. With `--staged`, it reads each staged file under
 `netlify-env-public/` from the index (`git show :<path>`), so it checks what
 will be committed, not the working copy; a staged file of the folder that is
 not named `*.env` (added with `git add -f`) is a fault too, and a deleted file
@@ -221,8 +228,12 @@ is not checked. The reasons:
 - `FAULT <path>: DID_DOMAIN <value> is not a lower-case host name`;
 - `FAULT <path>: <KEY> <value> is not an http(s) URL`, or `FAULT <path>: <KEY> holds user information`.
 
-A missing argument, or an unreadable reference list, is a usage error, exit
-`2`.
+`<DID_DOMAIN>` stands for the value when the file has none and is not named
+`*.env` directly in the folder.
+
+A missing argument, `--staged` with a file, an unreadable file, an unreadable
+or malformed reference list, or a failed `git` command (`--staged` outside a
+work tree) is a usage error, one line `check-netlify-env: <reason>`, exit `2`.
 
 [`tools/git-hooks/pre-commit`](tools/git-hooks/pre-commit) runs it with
 `--staged` before every commit, and refuses the commit on a fault. Enable it
