@@ -89,12 +89,8 @@ file says how a domain is set up.
 #### `netlify-env-public/`: the variables of every domain, on `main`
 
 The variables of each served domain are tracked on `main`, one file per
-domain, `netlify-env-public/<domain>.env`, and loaded into the domain's project
-with the Netlify CLI, from a clone linked to that project:
-
-```bash
-netlify env:import netlify-env-public/example.org.env
-```
+domain, `netlify-env-public/<domain>.env`, and loaded into the domain's
+Netlify project as described in *Loading a file into its project*, below.
 
 The folder's name is a warning: **everything in it is public**. It is on
 GitHub, on every branch that carries it, as soon as it is pushed, and its
@@ -124,11 +120,80 @@ whose URL is a capability. A key is added to it by a reviewed pull request.
 What the format cannot catch is a token in the query string of a URL: a
 redirect may need one. The review must.
 
-Changing a variable: change the file through a pull request, then import it
-again once merged. `env:import` merges into the project's variables: a key
-removed from the file stays in the project until `netlify env:unset <KEY>`.
-Never use `--replace-existing`, which deletes every variable the file does not
-name. To compare a project with its file: `netlify env:list --plain`.
+Changing a variable: change the file through a pull request, then load it
+again once merged. Loading merges into the project's variables: a key removed
+from the file stays in the project until it is deleted there by hand.
+
+#### Loading a file into its project
+
+No tool of this repository calls the Netlify CLI, and none needs it: the build
+runs on Netlify, and the publisher calls a build hook. Loading the variables
+is a maintainer step, done once per domain and again after each change.
+
+**In the Netlify UI** (the usual way; nothing to install). In the domain's
+project:
+
+1. *Project configuration > Environment variables*, then *Add a variable >
+   Import from a .env file*.
+2. Paste the content of `netlify-env-public/<domain>.env` from `main`, as it
+   is: its format is the `.env` format.
+3. Scopes: all scopes. Deploy contexts: the same value for all deploy contexts;
+   the Deploy Preview of every pull request needs the variables too.
+4. If a key already exists, the form shows a *Merge strategy*: choose
+   *Update conflicts*, so that the file's values replace the project's.
+5. *Import variables*. The values apply from the next build.
+
+A key removed from the file is deleted on the same page, from the key's own
+options.
+
+**With the API and `curl`** (to compare, or to script). The Netlify API
+serves the variables of a project under `https://api.netlify.com/api/v1/`,
+authenticated by a personal access token (*User settings > Applications >
+Personal access tokens*). The token is a secret: keep it in your shell only,
+never in a file of the clone, and never in `netlify-env-public/`, whose
+checker refuses `NETLIFY_AUTH_TOKEN`. `<project id>` is the *Project ID* of
+*Project configuration > General*.
+
+```bash
+read -rs NETLIFY_AUTH_TOKEN && export NETLIFY_AUTH_TOKEN   # paste the token; nothing is echoed
+API=https://api.netlify.com/api/v1
+SITE=<project id>
+auth="Authorization: Bearer $NETLIFY_AUTH_TOKEN"
+
+# Read: every variable of the project, to compare with its file (changes nothing).
+curl -sf -H "$auth" "$API/sites/$SITE/env"
+
+# The project's team, needed by the writing calls: the "account_slug" field.
+curl -sf -H "$auth" "$API/sites/$SITE"
+ACCOUNT=<account_slug>
+
+# Write one key that the project does not have yet:
+curl -sf -X POST -H "$auth" -H 'Content-Type: application/json' \
+  "$API/accounts/$ACCOUNT/env?site_id=$SITE" \
+  --data '[{"key":"DID_REDIRECT","values":[{"context":"all","value":"https://www.example.com/"}]}]'
+
+# Replace all the values of a key that it has:
+curl -sf -X PUT -H "$auth" -H 'Content-Type: application/json' \
+  "$API/accounts/$ACCOUNT/env/DID_REDIRECT?site_id=$SITE" \
+  --data '{"key":"DID_REDIRECT","values":[{"context":"all","value":"https://www.example.com/"}]}'
+
+# Delete a key removed from the file:
+curl -sf -X DELETE -H "$auth" "$API/accounts/$ACCOUNT/env/DID_LOG?site_id=$SITE"
+```
+
+The values go inside a JSON string: they hold no `"` or `\`, since they are
+host names and URLs that the checker accepts. These calls follow Netlify's API
+reference (`getSiteEnvVars`, `createEnvVars`, `updateEnvVar`, `deleteEnvVar`);
+the `scopes` field is left out, so a variable gets every scope.
+
+**With the Netlify CLI** (optional). It is the npm package `netlify-cli`,
+which needs Node.js 22.13 or later and, with `npx`, no installation by a
+package manager: `npx netlify-cli login`, then, from a clone linked to the
+project (`npx netlify-cli link`),
+`npx netlify-cli env:import netlify-env-public/<domain>.env`. It sets every
+key to all scopes and all deploy contexts, and merges. Never add
+`--replace-existing`: it deletes every variable the file does not name,
+`DID_ALLOW_NO_PREVIOUS` included.
 
 #### Checking a file before it leaves your clone
 
@@ -457,9 +522,11 @@ It leaves the clone's `HEAD`, index and working tree as they are. A
    anything live.
 4. **The Netlify project.** Create it from this repository, with production
    branch `main`. Leave its build settings empty: `netlify.toml` on `main`
-   gives them. Link a clone to it and run
-   `netlify env:import netlify-env-public/<domain>.env`, once step 3 is merged.
-   Add `DID_ALLOW_NO_PREVIOUS=1` for the **first deploy only**.
+   gives them. Once step 3 is merged, load
+   `netlify-env-public/<domain>.env` into it (*Loading a file into its
+   project*: in the Netlify UI, *Import from a .env file*). Add
+   `DID_ALLOW_NO_PREVIOUS=1` by hand, in the UI, for the **first deploy
+   only**: it is never in the file.
 5. **The custom domain.** Attach `<domain>` to the project, and wait until
    Netlify serves a valid certificate for it.
 6. **First deploy.** Trigger it. Then **remove `DID_ALLOW_NO_PREVIOUS`** and
@@ -481,8 +548,8 @@ For a domain that was served from `public/` on `main` before this layout:
 1. `tools/data-branch.sh init <domain> <clone> public` from `main` before the
    change. It refuses unless every copied file is identical to the live one.
    A maintainer pushes the branch.
-2. Import the domain's `netlify-env-public/<domain>.env` into its project. The old build
-   ignores these variables.
+2. Load the domain's `netlify-env-public/<domain>.env` into its project
+   (*Loading a file into its project*). The old build ignores these variables.
 3. The pull request that removes the data from `main` gets a Deploy Preview
    that runs the new build against the **live** site, without
    `DID_ALLOW_NO_PREVIOUS`. A lost or altered entry fails it.
@@ -531,7 +598,10 @@ and no caching. It also refuses a header set by two rules for the same path,
 since both values would be sent. And it checks that no tracked file outside
 `tools/fixtures/` and `netlify-env-public/` names a real domain: its list of
 real domains, built from parts so that the test does not name them, must be
-exactly the domains of `netlify-env-public/`.
+exactly the domains of `netlify-env-public/`. Finally, it checks that no script
+of the repository (a `*.sh` file, a hook of `tools/git-hooks/`, or a file
+starting with `#!`) calls the Netlify CLI (`netlify`, `ntl`, `netlify-cli`):
+only Netlify's runner, which reads `netlify.toml`, has it.
 
 `check-netlify-env.test.mjs` checks the files of `netlify-env-public/`: the
 folder admits only `*.env` files; every tracked file passes
