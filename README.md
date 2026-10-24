@@ -26,7 +26,7 @@ The repository holds two kinds of content, on different branches:
 
 | Branch | Holds | Written by |
 |---|---|---|
-| `main` | all the code, the shared files of the site, the templates, this documentation. **It names no domain.** | reviewed pull requests only |
+| `main` | all the code, the shared files of the site, the templates, this documentation, and the variables of each domain's project. **The code names no domain**: only `netlify-env-public/` and the test data of `tools/fixtures/` do. | reviewed pull requests only |
 | `data/<domain>` | that domain's DID document and revocation records, and nothing else | that domain's publishing tool, through `tools/publish.sh` |
 
 A data branch is an **orphan** branch: it shares no history with `main` and
@@ -82,13 +82,174 @@ One value, `DID_DOMAIN`, names both the DID and the branch, so the two cannot
 disagree. It is a host name: Netlify serves no other port than 443, so a
 `did:web` with a port has no place here.
 
-The variables hold no secret. Keep one file per domain, `env/<domain>.env`, in
-the ignored `env/` directory of your clone, and load it into the domain's
-project with the Netlify CLI, from a clone linked to that project:
+`DID_LOG` is read by `tools/make-did.mjs` only, on the publishing server: the
+build does not use it. It is recorded with the other variables so that one
+file says how a domain is set up.
+
+#### `netlify-env-public/`: the variables of every domain, on `main`
+
+The variables of each served domain are tracked on `main`, one file per
+domain, `netlify-env-public/<domain>.env`, and loaded into the domain's
+Netlify project as described in *Loading a file into its project*, below.
+
+The folder's name is a warning: **everything in it is public**. It is on
+GitHub, on every branch that carries it, as soon as it is pushed, and its
+values are on the domain's site: `DID_DOMAIN` everywhere, `DID_REDIRECT` in
+`index.html`. The build does not serve the files themselves. The variables
+hold no secret, and no secret may ever be written there.
+
+The format leaves a secret no field to hide in:
+
+- the file is named `<DID_DOMAIN>.env`, and nothing but `*.env` files can be
+  tracked in the folder (`.gitignore`);
+- every line is `KEY=VALUE`, split at the first `=`: no comment, no blank
+  line, no `export`, no carriage return. The value is one character or more,
+  none of them a blank, a control character, a quote (`"`, `'`, `` ` ``) or a
+  backslash: a host name or a URL needs none, and the `.env` format would
+  read them. So a trailing space, which `new URL()` would silently drop, makes
+  the line a fault (`not KEY=VALUE`), and so does a value in quotes. The final
+  newline may be left out;
+- the keys are those that
+  [`tools/netlify-env-keys.txt`](tools/netlify-env-keys.txt) lists as
+  `required` (each once) or `optional` (at most once). Any other key is refused,
+  whether that list names it as `prohibited`, with the reason, or not at all;
+- `DID_DOMAIN` is a lower-case host name; `DID_REDIRECT`, and `DID_LOG` when
+  present, are `http(s)` URLs without user information (`https://user:pass@…`).
+
+`tools/netlify-env-keys.txt` is the versioned reference of the keys: one key
+per line, its status, and for a `prohibited` key the reason. It names the
+dangerous keys known so far, such as `DID_ALLOW_NO_PREVIOUS`, which is set by
+hand for one deploy and never recorded, or the build hook of a publisher,
+whose URL is a capability. A key is added to it by a reviewed pull request.
+
+What the format cannot catch is a token in the query string of a URL: a
+redirect may need one. The review must.
+
+Changing a variable: change the file through a pull request, then load it
+again once merged. Loading merges into the project's variables: a key removed
+from the file stays in the project until it is deleted there by hand.
+
+#### Loading a file into its project
+
+No tool of this repository calls the Netlify CLI, and none needs it: the build
+runs on Netlify, and the publisher calls a build hook. Loading the variables
+is a maintainer step, done once per domain and again after each change.
+
+**In the Netlify UI** (the usual way; nothing to install). In the domain's
+project:
+
+1. *Project configuration > Environment variables*, then *Add a variable >
+   Import from a .env file*.
+2. Paste the content of `netlify-env-public/<domain>.env` from `main`, as it
+   is: its format is the `.env` format.
+3. Scopes: all scopes. Deploy contexts: the same value for all deploy contexts;
+   the Deploy Preview of every pull request needs the variables too.
+4. If a key already exists, the form shows a *Merge strategy*: choose
+   *Update conflicts*, so that the file's values replace the project's.
+5. *Import variables*. The values apply from the next build.
+
+A key removed from the file is deleted on the same page, from the key's own
+options.
+
+**With the API and `curl`** (to compare, or to script). The Netlify API
+serves the variables of a project under `https://api.netlify.com/api/v1/`,
+authenticated by a personal access token (*User settings > Applications >
+Personal access tokens*). The token is a secret: keep it in your shell only,
+never in a file of the clone, and never in `netlify-env-public/`, whose
+checker refuses `NETLIFY_AUTH_TOKEN`. `<project id>` is the *Project ID* of
+*Project configuration > General*.
 
 ```bash
-netlify env:import env/example.org.env
+read -rs NETLIFY_AUTH_TOKEN && export NETLIFY_AUTH_TOKEN   # paste the token; nothing is echoed
+API=https://api.netlify.com/api/v1
+SITE=<project id>
+auth="Authorization: Bearer $NETLIFY_AUTH_TOKEN"
+
+# Read: every variable of the project, to compare with its file (changes nothing).
+curl -sf -H "$auth" "$API/sites/$SITE/env"
+
+# The project's team, needed by the writing calls: the "account_slug" field.
+curl -sf -H "$auth" "$API/sites/$SITE"
+ACCOUNT=<account_slug>
+
+# Write one key that the project does not have yet:
+curl -sf -X POST -H "$auth" -H 'Content-Type: application/json' \
+  "$API/accounts/$ACCOUNT/env?site_id=$SITE" \
+  --data '[{"key":"DID_REDIRECT","values":[{"context":"all","value":"https://www.example.com/"}]}]'
+
+# Replace all the values of a key that it has:
+curl -sf -X PUT -H "$auth" -H 'Content-Type: application/json' \
+  "$API/accounts/$ACCOUNT/env/DID_REDIRECT?site_id=$SITE" \
+  --data '{"key":"DID_REDIRECT","values":[{"context":"all","value":"https://www.example.com/"}]}'
+
+# Delete a key removed from the file:
+curl -sf -X DELETE -H "$auth" "$API/accounts/$ACCOUNT/env/DID_LOG?site_id=$SITE"
 ```
+
+The values go inside a JSON string: they hold no `"` or `\`, since they are
+host names and URLs that the checker accepts. These calls follow Netlify's API
+reference (`getSiteEnvVars`, `createEnvVars`, `updateEnvVar`, `deleteEnvVar`);
+the `scopes` field is left out, so a variable gets every scope.
+
+**With the Netlify CLI** (optional). It is the npm package `netlify-cli`,
+which needs Node.js 22.13 or later and, with `npx`, no installation by a
+package manager: `npx netlify-cli login`, then, from a clone linked to the
+project (`npx netlify-cli link`),
+`npx netlify-cli env:import netlify-env-public/<domain>.env`. It sets every
+key to all scopes and all deploy contexts, and merges. Never add
+`--replace-existing`: it deletes every variable the file does not name,
+`DID_ALLOW_NO_PREVIOUS` included.
+
+#### Checking a file before it leaves your clone
+
+[`tools/check-netlify-env.mjs`](tools/check-netlify-env.mjs) applies the
+rules above:
+
+```bash
+node tools/check-netlify-env.mjs <file>...   # the files given
+node tools/check-netlify-env.mjs --staged    # what the index holds under netlify-env-public/
+```
+
+Each fault is one line on stderr, `FAULT <path>: <reason>`, and the exit
+code is `1`; nothing is printed and the exit code is `0` when every file
+passes. Every fault of every file is reported, the faults of the lines first,
+in order, then those of the file. With `--staged`, it reads each staged file under
+`netlify-env-public/` from the index (`git show :<path>`), so it checks what
+will be committed, not the working copy; a staged file of the folder that is
+not named `*.env` (added with `git add -f`) is a fault too, and a deleted file
+is not checked. The reasons:
+
+- `FAULT <path>: not named <DID_DOMAIN>.env`, with the value of `DID_DOMAIN`, when the file's name is not that value followed by `.env`;
+- `FAULT <path>:<n>: not KEY=VALUE`, for a comment, a blank line, an `export`, a carriage return, or any other line;
+- `FAULT <path>:<n>: <KEY> is prohibited: <reason>`, with the reason from the reference list;
+- `FAULT <path>:<n>: <KEY> is not an allowed key`;
+- `FAULT <path>:<n>: <KEY> given twice`;
+- `FAULT <path>: <KEY> missing`, for a required key;
+- `FAULT <path>: DID_DOMAIN <value> is not a lower-case host name`;
+- `FAULT <path>: <KEY> <value> is not an http(s) URL`, or `FAULT <path>: <KEY> holds user information`.
+
+`<DID_DOMAIN>` stands for the value when the file has none and is not named
+`*.env` directly in the folder.
+
+A missing argument, `--staged` with a file, an unreadable file, an unreadable
+or malformed reference list, or a failed `git` command (`--staged` outside a
+work tree) is a usage error, one line `check-netlify-env: <reason>`, exit `2`.
+
+[`tools/git-hooks/pre-commit`](tools/git-hooks/pre-commit) runs it with
+`--staged` before every commit, and refuses the commit on a fault. Enable it
+once per clone; the worktrees of the clone share the setting:
+
+```bash
+git config core.hooksPath tools/git-hooks
+```
+
+Its limits: it is a setting of your clone, not of the repository; `git commit
+--no-verify` skips it; commits that git makes without running `pre-commit`,
+by `cherry-pick` or `rebase`, are not checked; and a worktree whose branch
+predates the hook has no hook to run. The repository's **push protection**
+and secret scanning are the server-side line: they block known token formats
+at push time. A secret that reaches GitHub anyway must be **rotated**:
+deleting it does not unpublish it.
 
 ### Templates
 
@@ -174,8 +335,12 @@ a package, was set aside: every copy would need each fix.
 | [`tools/fetch-live.mjs`](tools/fetch-live.mjs) | mirrors a live site's document and records, for the check |
 | [`tools/hash-to-curve.mjs`](tools/hash-to-curve.mjs) | RFC 9380 hash-to-curve for P-256: the placeholder of a revoked key |
 | [`tools/ots-header.mjs`](tools/ots-header.mjs) | reads the digest an OpenTimestamps proof commits to |
+| [`tools/check-netlify-env.mjs`](tools/check-netlify-env.mjs) | checks the files of `netlify-env-public/` |
+| [`tools/netlify-env-keys.txt`](tools/netlify-env-keys.txt) | the reference of the keys a file of `netlify-env-public/` may, must or must never hold |
+| [`tools/git-hooks/pre-commit`](tools/git-hooks/pre-commit) | refuses a commit whose files of `netlify-env-public/` fail the check |
 | `tools/*.test.mjs` | the cases each of them must decide |
-| `tools/fixtures/` | test data; the only tracked files that may name a real domain |
+| `netlify-env-public/<domain>.env` | the variables of a domain's Netlify project; with `tools/fixtures/`, the only tracked files that may name a real domain |
+| `tools/fixtures/` | test data. `tools/fixtures/<first domain>/` holds the pages and the variables that domain was served with before the move to a data branch: the frozen input of a regression test, not the record of its variables |
 
 ## Rules
 
@@ -359,12 +524,20 @@ It leaves the clone's `HEAD`, index and working tree as they are. A
    *(into the vault, never a file in the clone)*. Commit
    `.well-known/did.json`, then have a maintainer review and push the branch.
    The `Data branches` ruleset covers it at once.
-3. **The variables.** Write `env/<domain>.env` with `DID_DOMAIN`,
-   `DID_REDIRECT` and, if used, `DID_LOG`.
+3. **The variables.** Through a pull request to `main`, add
+   `netlify-env-public/<domain>.env` with `DID_DOMAIN`, `DID_REDIRECT` and, if
+   used, `DID_LOG`, and add the domain to the list of real domains of
+   `tools/site.test.mjs`. This step may come before step 2: nothing reads the
+   file until a project imports it, and a project whose data branch does not
+   exist yet fails its build (`no branch data/<domain>`) without changing
+   anything live.
 4. **The Netlify project.** Create it from this repository, with production
    branch `main`. Leave its build settings empty: `netlify.toml` on `main`
-   gives them. Link a clone to it and run `netlify env:import env/<domain>.env`.
-   Add `DID_ALLOW_NO_PREVIOUS=1` for the **first deploy only**.
+   gives them. Once step 3 is merged, load
+   `netlify-env-public/<domain>.env` into it (*Loading a file into its
+   project*: in the Netlify UI, *Import from a .env file*). Add
+   `DID_ALLOW_NO_PREVIOUS=1` by hand, in the UI, for the **first deploy
+   only**: it is never in the file.
 5. **The custom domain.** Attach `<domain>` to the project, and wait until
    Netlify serves a valid certificate for it.
 6. **First deploy.** Trigger it. Then **remove `DID_ALLOW_NO_PREVIOUS`** and
@@ -386,8 +559,8 @@ For a domain that was served from `public/` on `main` before this layout:
 1. `tools/data-branch.sh init <domain> <clone> public` from `main` before the
    change. It refuses unless every copied file is identical to the live one.
    A maintainer pushes the branch.
-2. Import the domain's `env/<domain>.env` into its project. The old build
-   ignores these variables.
+2. Load the domain's `netlify-env-public/<domain>.env` into its project
+   (*Loading a file into its project*). The old build ignores these variables.
 3. The pull request that removes the data from `main` gets a Deploy Preview
    that runs the new build against the **live** site, without
    `DID_ALLOW_NO_PREVIOUS`. A lost or altered entry fails it.
@@ -434,7 +607,20 @@ that every served file outside `/doc/` gets `X-Robots-Tag` and nothing under
 `/.well-known/did.json` and the records, taken together: the media type, CORS
 and no caching. It also refuses a header set by two rules for the same path,
 since both values would be sent. And it checks that no tracked file outside
-`tools/fixtures/` names a real domain.
+`tools/fixtures/` and `netlify-env-public/` names a real domain: its list of
+real domains, built from parts so that the test does not name them, must be
+exactly the domains of `netlify-env-public/`. Finally, it checks that no script
+of the repository (a `*.sh` file, a hook of `tools/git-hooks/`, or a file
+starting with `#!`) calls the Netlify CLI (`netlify`, `ntl`, `netlify-cli`):
+only Netlify's runner, which reads `netlify.toml`, has it.
+
+`check-netlify-env.test.mjs` checks the files of `netlify-env-public/`: the
+folder admits only `*.env` files; every tracked file passes
+`tools/check-netlify-env.mjs`; every file builds a site with `build-site.mjs`,
+so its values pass the build's own checks; the reference list of keys is
+well formed; the checker refuses each prohibited key of that list, any
+unlisted key and every malformed line; and the `pre-commit` hook refuses a
+commit that fails the check.
 
 `--verify-file` needs no secret, so it is the check the deploy-time build runs.
 It refuses a fragment that has the *shape* of a thumbprint without being one, a
@@ -462,4 +648,5 @@ Change History
 | PR  | Summary |
 |-----|---------|
 | #10 | several domains: code on main, data on one orphan branch per domain (#8) |
+| #13 | the variables of every domain tracked in netlify-env-public/ (#11) |
 -->

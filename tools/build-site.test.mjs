@@ -79,9 +79,14 @@ test("a data tree whose .gitignore is modified, or missing, is refused", async (
 // from public/ before #8 (main @ 2a40395), byte for byte. The one exception
 // is a comment of index.html, which named the redirect's host without `www.`:
 // the template names {{DID_REDIRECT_HOST}}.
+//
+// tools/fixtures/<first domain>/ is the frozen input of this test: the pages
+// and the variables the domain was served with before #8. It is not the
+// record of the domain's variables, which is netlify-env-public/ (#11), and
+// does not follow it.
 test("built with the first domain's values, the pages are byte-identical to those served before #8", async () => {
   // The domain's name is built from parts: no tracked file outside
-  // tools/fixtures/ names a real domain (site.test.mjs).
+  // tools/fixtures/ and netlify-env-public/ names a real domain (site.test.mjs).
   const FIRST = `${["nati", "xar"].join("")}.pro`;
   const FIXTURE = join(TOOLS, "fixtures", FIRST);
   const env = Object.fromEntries(lines(await read(FIXTURE, `${FIRST}.env`))
@@ -233,3 +238,4 @@ test("tools/data-branch.gitignore admits exactly the data paths", async () => {
 // | PR     | Summary                                                       |
 // |--------|---------------------------------------------------------------|
 // | #10    | the site of one domain, and what a data tree may hold (#8)    |
+// | #13    | the fixture is the frozen input of the migration test (#11)   |

@@ -368,21 +368,38 @@ test("sitemap.xml lists exactly the canonical URLs of the pages under /doc/, and
   assert.ok(robots.includes(`Sitemap: https://${domainOf(did)}/sitemap.xml`), "Sitemap line");
 });
 
-// The real domains served from this repository. Their names are built from
-// parts, so that this file does not contain them.
-const REAL_DOMAINS = [["nati", "xar"], ["cal", "cool"]].map((p) => p.join(""));
+// The real domains served from this repository, in full. Their names are built
+// from parts, so that this file does not contain them. Converted in #11 from
+// two bare names to the full domains, with a third; the list must be exactly
+// the domains of netlify-env-public/ (test below).
+const REAL_DOMAINS = [
+  `${["nati", "xar"].join("")}.pro`,
+  `${["cal", "cool"].join("")}.ai`,
+  `${["cabi", "net-medi", "cal-du-parc"].join("")}.care`,
+];
+
+/** The words of `text`, cut at every character that is not a letter or a digit, in lower case. */
+const wordsOf = (text) => text.split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w.toLowerCase());
+
+/** The words that name a domain: those of its label before the top-level one. */
+const nameOf = (domain) => wordsOf(domain.split(".").slice(-2, -1)[0]);
+const REAL_NAMES = REAL_DOMAINS.map(nameOf);
 
 /**
- * Whether `text` names a real domain: some word of it, cut at every character
- * that is not a letter or a digit, is one of REAL_DOMAINS, whatever its case.
- * Whole words only, never substrings.
+ * Whether `text` names a real domain: the words of some domain's name appear
+ * in it as consecutive words, whatever their case. Whole words only, never
+ * substrings.
  */
-const namesRealDomain = (text) => text.split(/[^A-Za-z0-9]+/).some((w) => REAL_DOMAINS.includes(w.toLowerCase()));
+function namesRealDomain(text) {
+  const words = wordsOf(text);
+  return REAL_NAMES.some((name) => words.some((_, i) => name.every((w, j) => words[i + j] === w)));
+}
 
 // The check itself, against look-alikes. It passes before the change too: it
-// tests the test, not the repository.
+// tests the test, not the repository. Converted in #11: the names come from
+// the full domains; the cases are unchanged.
 test("a real domain is recognised as a whole word only", () => {
-  const [d1, d2] = REAL_DOMAINS;
+  const [d1, d2] = REAL_NAMES.map((n) => n.join("-"));
   for (const [text, names] of [
     [`${d1}.pro`, true], [`www.${d1}.com`, true], [`did:web:${d2}.ai`, true],
     [`${d1.toUpperCase()} serves`, true], [`(${d2})`, true],
@@ -390,16 +407,96 @@ test("a real domain is recognised as a whole word only", () => {
   ]) assert.equal(namesRealDomain(text), names, text);
 });
 
-// Converted in #8 from "no tracked file under tools/ names a site: site values
-// live in did.config.json": main is neutral as a whole, and the site values are
-// the Netlify projects' variables. Test data under tools/fixtures/ may name them.
-test("no tracked file outside tools/fixtures/ names a real domain", async () => {
+/** The tracked files of `main` under `dir`, as git paths. */
+async function tracked(dir = ".") {
   const { execFileSync } = await import("node:child_process");
-  const files = execFileSync("git", ["ls-files"], { cwd: REPO_ROOT, encoding: "utf8" })
-    .split("\n").filter(Boolean).filter((f) => !f.startsWith("tools/fixtures/"));
+  return execFileSync("git", ["ls-files", "--", dir], { cwd: REPO_ROOT, encoding: "utf8" }).split("\n").filter(Boolean);
+}
+
+/** A tracked file of the variables of a domain: netlify-env-public/<name>.env, directly in the folder. */
+const isEnvFile = (f) => f.startsWith("netlify-env-public/") && !f.slice("netlify-env-public/".length).includes("/")
+  && f.endsWith(".env");
+
+// #11: the variables of every domain are tracked in netlify-env-public/, and
+// this list of real domains follows them. A lost file, an extra one, or a
+// domain left out of the list fails.
+test("the real domains are exactly the domains of netlify-env-public/", async () => {
+  const domains = (await tracked("netlify-env-public")).filter(isEnvFile)
+    .map((f) => f.slice("netlify-env-public/".length, -".env".length));
+  assert.deepEqual(domains.sort(), [...REAL_DOMAINS].sort());
+});
+
+// REVIEW PLACEHOLDER: no tracked file outside tools/fixtures/ names a real domain
+//   -> no tracked file outside tools/fixtures/ and netlify-env-public/ names a real domain
+// test("no tracked file outside tools/fixtures/ names a real domain", async () => {
+//   const { execFileSync } = await import("node:child_process");
+//   const files = execFileSync("git", ["ls-files"], { cwd: REPO_ROOT, encoding: "utf8" })
+//     .split("\n").filter(Boolean).filter((f) => !f.startsWith("tools/fixtures/"));
+//   assert.ok(files.length > 0);
+//   const offenders = [];
+//   for (const f of files) if (namesRealDomain(await readFile(join(REPO_ROOT, f), "utf8"))) offenders.push(f);
+//   assert.deepEqual(offenders, []);
+// });
+
+// Converted in #8 from "no tracked file under tools/ names a site: site values
+// live in did.config.json", and in #11: the code names no domain; the
+// variables of each domain's project (netlify-env-public/) and the test data
+// (tools/fixtures/) may.
+test("no tracked file outside tools/fixtures/ and netlify-env-public/ names a real domain", async () => {
+  const files = (await tracked()).filter((f) => !f.startsWith("tools/fixtures/") && !isEnvFile(f));
   assert.ok(files.length > 0);
   const offenders = [];
   for (const f of files) if (namesRealDomain(await readFile(join(REPO_ROOT, f), "utf8"))) offenders.push(f);
+  assert.deepEqual(offenders, []);
+});
+
+// #11: the maintainer has no Netlify CLI, so no script of the repository may
+// call it. Netlify's own runner reads netlify.toml, whose commands run where
+// the CLI exists; netlify.toml is not a script and is not checked here. No
+// GitHub workflow exists; one would run on a runner too.
+const NETLIFY_CLI = ["netlify", "ntl", "netlify-cli"];
+
+/**
+ * Whether a script's `text` calls the Netlify CLI: some token of a line, cut
+ * at blanks and at the shell's metacharacters and quotes, is one of
+ * NETLIFY_CLI, in lower case as a command is spelt. A token starting with `#`
+ * ends the line: the rest is a comment. Whole tokens only, never substrings.
+ */
+function callsNetlifyCli(text) {
+  return text.split("\n").some((line) => {
+    const tokens = line.split(/[\s;&|()<>`"'$={}]+/).filter(Boolean);
+    const end = tokens.findIndex((t) => t.startsWith("#"));
+    return (end === -1 ? tokens : tokens.slice(0, end)).some((t) => NETLIFY_CLI.includes(t));
+  });
+}
+
+// The check itself, against look-alikes. It passes before the change too: it
+// tests the test, not the repository.
+test("a call of the Netlify CLI is recognised as a whole token only", () => {
+  for (const [text, calls] of [
+    ["netlify env:import x.env", true], ["  npx netlify-cli env:import x.env", true],
+    ["make && netlify deploy", true], ["v=$(netlify status)", true], ["ntl build", true],
+    ["exec \"netlify\" api listSites", true],
+    ["say() { printf 'netlify-build: %s\\n' \"$*\" >&2; }", false], ["sh tools/netlify-build.sh", false],
+    ["# netlify env:import x.env", false], ["echo ok # then netlify deploy", false],
+    ["echo Netlify cancels the build", false], ["NETLIFY_AUTH_TOKEN=x", false],
+    ["mynetlify run", false], ["netlifyctl run", false], ["cat netlify.toml", false],
+  ]) assert.equal(callsNetlifyCli(text), calls, text);
+});
+
+/** Whether the tracked file `f`, of content `text`, is a script: by its extension, its folder or its first line. */
+const isScript = (f, text) => f.endsWith(".sh") || f.startsWith("tools/git-hooks/") || text.startsWith("#!");
+
+test("no script of the repository calls the Netlify CLI", async () => {
+  const offenders = [];
+  let scripts = 0;
+  for (const f of await tracked()) {
+    const text = await readFile(join(REPO_ROOT, f), "utf8");
+    if (!isScript(f, text)) continue;
+    scripts++;
+    if (callsNetlifyCli(text)) offenders.push(f);
+  }
+  assert.ok(scripts > 0);
   assert.deepEqual(offenders, []);
 });
 
@@ -407,3 +504,4 @@ test("no tracked file outside tools/fixtures/ names a real domain", async () => 
 // | PR     | Summary                                                       |
 // |--------|---------------------------------------------------------------|
 // | #10    | reads the built site; main names no domain (#8)               |
+// | #13    | real domains = netlify-env-public/; no script calls the CLI   |
