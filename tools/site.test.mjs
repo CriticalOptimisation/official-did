@@ -504,3 +504,4 @@ test("no script of the repository calls the Netlify CLI", async () => {
 // | PR     | Summary                                                       |
 // |--------|---------------------------------------------------------------|
 // | #10    | reads the built site; main names no domain (#8)               |
+// | #13    | real domains = netlify-env-public/; no script calls the CLI   |

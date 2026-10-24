@@ -20,3 +20,4 @@ node_modules/
 # | PR     | Summary                                                       |
 # |--------|---------------------------------------------------------------|
 # | #10    | ignore env/ and dist/ (#8)                                    |
+# | #13    | netlify-env-public/ admits only <domain>.env files (#11)      |

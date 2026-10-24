@@ -23,3 +23,8 @@ NETLIFY_AUTH_TOKEN       prohibited  a Netlify access token: full access to the 
 GITHUB_TOKEN             prohibited  a GitHub token
 GH_TOKEN                 prohibited  a GitHub token
 GH_ENTERPRISE_TOKEN      prohibited  a GitHub token
+
+# --- Change History -------------------------------------------------------
+# | PR     | Summary                                                       |
+# |--------|---------------------------------------------------------------|
+# | #13    | the keys a file of netlify-env-public/ may hold (#11)         |

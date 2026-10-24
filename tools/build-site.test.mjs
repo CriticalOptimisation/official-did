@@ -238,3 +238,4 @@ test("tools/data-branch.gitignore admits exactly the data paths", async () => {
 // | PR     | Summary                                                       |
 // |--------|---------------------------------------------------------------|
 // | #10    | the site of one domain, and what a data tree may hold (#8)    |
+// | #13    | the fixture is the frozen input of the migration test (#11)   |

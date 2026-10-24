@@ -648,4 +648,5 @@ Change History
 | PR  | Summary |
 |-----|---------|
 | #10 | several domains: code on main, data on one orphan branch per domain (#8) |
+| #13 | the variables of every domain tracked in netlify-env-public/ (#11) |
 -->

@@ -16,3 +16,4 @@ exec "${NODE:-node}" tools/check-netlify-env.mjs --staged
 # --- Change History -------------------------------------------------------
 # | PR     | Summary                                                       |
 # |--------|---------------------------------------------------------------|
+# | #13    | refuses a commit that fails check-netlify-env.mjs (#11)       |

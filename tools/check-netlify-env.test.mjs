@@ -416,3 +416,8 @@ test("--staged outside a git work tree is a usage error", async () => {
   assert.equal(r.status, 2);
   assert.deepEqual(lines(r.stderr).filter(Boolean).map((l) => l.split(":").slice(0, 2).join(":")), ["check-netlify-env: git rev-parse"]);
 });
+
+// --- Change History -------------------------------------------------------
+// | PR     | Summary                                                       |
+// |--------|---------------------------------------------------------------|
+// | #13    | the files of netlify-env-public/, checker and hook (#11)      |
