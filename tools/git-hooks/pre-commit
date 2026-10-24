@@ -1,0 +1,18 @@
+#!/bin/sh
+# Refuses a commit whose files of netlify-env-public/ fail
+# tools/check-netlify-env.mjs: the check reads what the index holds, so it
+# sees what will be committed, not the working copy (#11).
+#
+# Enable it once per clone; the worktrees of the clone share the setting:
+#   git config core.hooksPath tools/git-hooks
+# `git commit --no-verify` skips it, and git does not run it for the commits
+# of cherry-pick or rebase. Push protection and secret scanning on GitHub are
+# the server-side line.
+#
+# git runs a hook from the top of the work tree. NODE names another node.
+
+exec "${NODE:-node}" tools/check-netlify-env.mjs --staged
+
+# --- Change History -------------------------------------------------------
+# | PR     | Summary                                                       |
+# |--------|---------------------------------------------------------------|

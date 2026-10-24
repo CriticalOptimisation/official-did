@@ -7,7 +7,13 @@
 .env
 node_modules/
 /.worktrees/
-/env/
+# netlify-env-public/ holds the variables of each domain's Netlify project,
+# public by design (#11): nothing but <domain>.env files directly in it, and
+# no directory named like one.
+/netlify-env-public/*
+!/netlify-env-public/*.env
+/netlify-env-public/.env
+/netlify-env-public/*.env/
 /dist/
 
 # --- Change History -------------------------------------------------------
