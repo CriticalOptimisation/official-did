@@ -1,0 +1,34 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/jwk/v1",
+    "https://www.w3.org/ns/cid/v1",
+    {
+      "KeyRevocationRecords": "https://calcool.ai/doc/keyrevocationrecords#KeyRevocationRecords"
+    }
+  ],
+  "id": "did:web:calcool.ai",
+  "verificationMethod": [
+    {
+      "id": "did:web:calcool.ai#0r0swbaonIg9JtBFVLgxO9hdVWbH02X31dqn2RMerFo",
+      "type": "JsonWebKey",
+      "controller": "did:web:calcool.ai",
+      "publicKeyJwk": {
+        "crv": "P-256",
+        "kty": "EC",
+        "x": "25BE7HlyPpEYHg_sW1k6wuOt5Sa6YD-l538ZZfx2jp8",
+        "y": "j2MFKV0OWCKMtGI1o0TsYBg78W-Z9g3cHsbtFXjD8A4"
+      }
+    }
+  ],
+  "assertionMethod": [
+    "did:web:calcool.ai#0r0swbaonIg9JtBFVLgxO9hdVWbH02X31dqn2RMerFo"
+  ],
+  "service": [
+    {
+      "id": "did:web:calcool.ai#revocations",
+      "type": "KeyRevocationRecords",
+      "serviceEndpoint": "https://calcool.ai/revocations/"
+    }
+  ]
+}
