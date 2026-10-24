@@ -1,0 +1,25 @@
+# tools/netlify-env-keys.txt — the keys of a file of netlify-env-public/ (#11).
+#
+# Everything in netlify-env-public/ is public: on GitHub, and on the domain's
+# site. tools/check-netlify-env.mjs reads this list:
+#   required    the key must be in every file, once;
+#   optional    the key may be in a file, at most once;
+#   prohibited  the key must never be in a file; the rest of the line says why.
+# Any key this list does not name is refused too: the list of prohibited keys
+# gives the reason for the dangerous keys known so far, it is not the rule.
+#
+# Format: one key per line, `<KEY> <status> [<reason>]`, separated by spaces.
+# A line starting with `#` is a comment; blank lines are ignored.
+# A key is added or changed by a reviewed pull request only.
+
+DID_DOMAIN               required
+DID_REDIRECT             required
+DID_LOG                  optional
+
+DID_ALLOW_NO_PREVIOUS    prohibited  set by hand for the first deploy of a domain only, then removed; never recorded
+DID_PUBLISH_BUILD_HOOK   prohibited  the build hook URL of a project is a capability: whoever holds it can trigger builds
+DID_PUBLISH_WORKDIR      prohibited  a setting of the publishing server, not of the Netlify project
+NETLIFY_AUTH_TOKEN       prohibited  a Netlify access token: full access to the account
+GITHUB_TOKEN             prohibited  a GitHub token
+GH_TOKEN                 prohibited  a GitHub token
+GH_ENTERPRISE_TOKEN      prohibited  a GitHub token
