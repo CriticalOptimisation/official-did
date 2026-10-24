@@ -450,6 +450,56 @@ test("no tracked file outside tools/fixtures/ and netlify-env-public/ names a re
   assert.deepEqual(offenders, []);
 });
 
+// #11: the maintainer has no Netlify CLI, so no script of the repository may
+// call it. Netlify's own runner reads netlify.toml, whose commands run where
+// the CLI exists; netlify.toml is not a script and is not checked here. No
+// GitHub workflow exists; one would run on a runner too.
+const NETLIFY_CLI = ["netlify", "ntl", "netlify-cli"];
+
+/**
+ * Whether a script's `text` calls the Netlify CLI: some token of a line, cut
+ * at blanks and at the shell's metacharacters and quotes, is one of
+ * NETLIFY_CLI, in lower case as a command is spelt. A token starting with `#`
+ * ends the line: the rest is a comment. Whole tokens only, never substrings.
+ */
+function callsNetlifyCli(text) {
+  return text.split("\n").some((line) => {
+    const tokens = line.split(/[\s;&|()<>`"'$={}]+/).filter(Boolean);
+    const end = tokens.findIndex((t) => t.startsWith("#"));
+    return (end === -1 ? tokens : tokens.slice(0, end)).some((t) => NETLIFY_CLI.includes(t));
+  });
+}
+
+// The check itself, against look-alikes. It passes before the change too: it
+// tests the test, not the repository.
+test("a call of the Netlify CLI is recognised as a whole token only", () => {
+  for (const [text, calls] of [
+    ["netlify env:import x.env", true], ["  npx netlify-cli env:import x.env", true],
+    ["make && netlify deploy", true], ["v=$(netlify status)", true], ["ntl build", true],
+    ["exec \"netlify\" api listSites", true],
+    ["say() { printf 'netlify-build: %s\\n' \"$*\" >&2; }", false], ["sh tools/netlify-build.sh", false],
+    ["# netlify env:import x.env", false], ["echo ok # then netlify deploy", false],
+    ["echo Netlify cancels the build", false], ["NETLIFY_AUTH_TOKEN=x", false],
+    ["mynetlify run", false], ["netlifyctl run", false], ["cat netlify.toml", false],
+  ]) assert.equal(callsNetlifyCli(text), calls, text);
+});
+
+/** Whether the tracked file `f`, of content `text`, is a script: by its extension, its folder or its first line. */
+const isScript = (f, text) => f.endsWith(".sh") || f.startsWith("tools/git-hooks/") || text.startsWith("#!");
+
+test("no script of the repository calls the Netlify CLI", async () => {
+  const offenders = [];
+  let scripts = 0;
+  for (const f of await tracked()) {
+    const text = await readFile(join(REPO_ROOT, f), "utf8");
+    if (!isScript(f, text)) continue;
+    scripts++;
+    if (callsNetlifyCli(text)) offenders.push(f);
+  }
+  assert.ok(scripts > 0);
+  assert.deepEqual(offenders, []);
+});
+
 // --- Change History -------------------------------------------------------
 // | PR     | Summary                                                       |
 // |--------|---------------------------------------------------------------|
