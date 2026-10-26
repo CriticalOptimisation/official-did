@@ -24,6 +24,9 @@
   "assertionMethod": [
     "did:web:calcool.ai#0r0swbaonIg9JtBFVLgxO9hdVWbH02X31dqn2RMerFo"
   ],
+  "authentication": [
+    "did:web:calcool.ai#0r0swbaonIg9JtBFVLgxO9hdVWbH02X31dqn2RMerFo"
+  ],
   "service": [
     {
       "id": "did:web:calcool.ai#revocations",
