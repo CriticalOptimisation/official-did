@@ -56,6 +56,21 @@ test("a build that removes an entry of the live state fails", async () => {
   assert.ok(hasLine(r.stderr, /^FAULT .+: removed since the previous state$/), r.stderr);
 });
 
+test("a data tree whose authentication list was edited by hand fails the build (#21)", async () => {
+  const a = await dataTree(A);
+  const live = await copyOf(a.tree);
+  // The control: the same build, before the edit, passes.
+  const control = await build(A, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: live, URL: `https://${A}` });
+  assert.equal(control.status, 0, control.stderr);
+  const doc = JSON.parse(await docOf(a.tree));
+  // Only the active key, the revoked one dropped: not the copy of assertionMethod.
+  doc.authentication = doc.assertionMethod.filter((id) => id.endsWith(a.tp2));
+  await writeFile(join(a.tree, DOCUMENT), JSON.stringify(doc, null, 2) + "\n");
+  const r = await build(A, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: live, URL: `https://${A}` });
+  assert.notEqual(r.status, 0);
+  assert.ok(hasLine(r.stderr, /^FAULT authentication differs from assertionMethod \(a temporary copy until #16\)$/), r.stderr);
+});
+
 test("the live state is fetched from $URL, records included, through the live document", async () => {
   const t = await dataTree(LOCAL);
   const live = await copyOf(t.tree);

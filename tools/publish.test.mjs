@@ -169,7 +169,7 @@ test("a make-did.mjs failure is not a lost race: no push, no retry", async () =>
   const ctx = await setup();
   const { bin, count } = await fakeGit(ctx.root, { mode: "real", times: 0 });
   const r = await publish(ctx, { PATH: `${bin}:${process.env.PATH}` },
-    ["--revoke", "A".repeat(43), "--compromised-after", "2026-01-01T00:00:00Z"]);
+    ["--emergency", "--revoke", "A".repeat(43), "--compromised-after", "2026-01-01T00:00:00Z"]);
   assert.notEqual(r.status, 0);
   assert.equal(matching(r.stderr, /^FAULT A{43}: no entry with this thumbprint$/).length, 1, r.stderr);
   assert.equal(matching(r.stderr, /^publish: make-did\.mjs failed, not retried$/).length, 1, r.stderr);
@@ -243,7 +243,7 @@ test("a change outside the data paths is refused: nothing pushed, no build", asy
   const before = headOf(ctx.origin, BRANCH);
 
   const tp = await thumbprintOf(jwk);
-  const r = await publish(ctx, {}, ["--revoke", tp, "--compromised-after", "2026-01-01T00:00:00Z"]);
+  const r = await publish(ctx, {}, ["--emergency", "--revoke", tp, "--compromised-after", "2026-01-01T00:00:00Z"]);
   assert.equal(r.status, 1, r.stderr);
   assert.equal(matching(r.stderr, new RegExp(`^publish: elsewhere/${tp}\\.json is not a data path, not published$`)).length, 1, r.stderr);
   assert.equal(headOf(ctx.origin, BRANCH), before);

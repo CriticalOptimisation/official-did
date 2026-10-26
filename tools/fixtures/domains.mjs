@@ -64,7 +64,7 @@ export async function dataTree(domain) {
   const k1 = await freshJwk(), k2 = await freshJwk();
   makeDid(domain, tree, ["--from-private", "-"], k1);
   makeDid(domain, tree, ["--from-private", "-", "--append"], k2);
-  makeDid(domain, tree, ["--revoke", await thumbprintOf(k1), "--compromised-after", "2026-01-01T00:00:00Z"]);
+  makeDid(domain, tree, ["--emergency", "--revoke", await thumbprintOf(k1), "--compromised-after", "2026-01-01T00:00:00Z"]);
   await copyFile(DATA_GITIGNORE, join(tree, ".gitignore"));
   return { tree, domain, tp1: await thumbprintOf(k1), tp2: await thumbprintOf(k2) };
 }
