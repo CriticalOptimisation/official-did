@@ -775,3 +775,4 @@ test("the records' endpoint may move, if every record follows; a lost record or 
 // | PR     | Summary                                                       |
 // |--------|---------------------------------------------------------------|
 // | #10    | DID_DOMAIN and DID_LOG replace --config (#8)                  |
+// | #22    | authentication copied, --revoke behind --emergency (#21)      |

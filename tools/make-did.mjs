@@ -544,3 +544,4 @@ main().catch((e) => { console.error(e.message); process.exit(1); });
 // | PR     | Summary                                                       |
 // |--------|---------------------------------------------------------------|
 // | #10    | the DID from --did or DID_DOMAIN, the log from DID_LOG (#8)   |
+// | #22    | authentication, a copy of assertionMethod; --emergency (#21)  |

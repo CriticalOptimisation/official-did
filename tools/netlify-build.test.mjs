@@ -207,3 +207,4 @@ test("a stale output directory is replaced, not merged into", async () => {
 // | PR     | Summary                                                       |
 // |--------|---------------------------------------------------------------|
 // | #10    | the build fetches and checks data/$DID_DOMAIN (#8)            |
+// | #22    | a hand-edited authentication list fails the build (#21)       |

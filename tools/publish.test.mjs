@@ -328,3 +328,4 @@ test("an unreachable build hook: published, not deployed, exit 3", async () => {
 // | PR     | Summary                                                       |
 // |--------|---------------------------------------------------------------|
 // | #10    | publishing to data/$DID_DOMAIN, then the build hook (#8)      |
+// | #22    | --revoke needs --emergency; rollout of authentication (#21)   |

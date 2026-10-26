@@ -165,3 +165,4 @@ export function run(cmd, args, env, input = "") {
 // | PR     | Summary                                                       |
 // |--------|---------------------------------------------------------------|
 // | #10    | two fixture domains with their data branches (#8)             |
+// | #22    | the fixture revokes with --emergency (#21)                    |
