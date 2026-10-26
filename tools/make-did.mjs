@@ -31,20 +31,25 @@
 //       nothing.
 //   --from-private <file|-> --check
 //       writes nothing; exits 1 if the document on disk does not carry the key.
-//   --revoke <thumbprint> --compromised-after <dateTimeStamp>
+//   --revoke <thumbprint> --compromised-after <dateTimeStamp> --emergency
 //       revokes every entry of the key and writes its revocation record, as one
 //       change. Allowed on the last active key. Combinable with a key to --append.
+//       TEMPORARILY DISABLED until #16 (#21): refused, and nothing written,
+//       unless --emergency is given. The revoked entries stay in both
+//       assertionMethod and authentication, with the placeholder key.
 //   --revoke-update <thumbprint> --compromised-after <dateTimeStamp>
 //       moves a record's compromisedAfter EARLIER; never later.
 //   --anchor <thumbprint> --tree-size <n> --root <base64url> --ots <file> [--tsr <file>]
 //       adds an anchor of the issuance log to a record, with its proof files.
 //   --normalize
-//       brings @context and the `service` entry to the current form; refused
-//       if any entry would change.
+//       brings @context, the `service` entry and the `authentication` list to
+//       the current form; refused if any entry would change.
 //   --verify-file <file> [--previous <site-dir>]
 //       consistency check WITHOUT any secret: the check the deploy-time build
 //       runs. With --previous, also refuses anything that does not extend the
-//       earlier state found in <site-dir> (document and records).
+//       earlier state found in <site-dir> (document and records). Refuses an
+//       `authentication` list that is not exactly `assertionMethod`; a
+//       document without the list is accepted.
 //
 // Options:
 //   --did <did>            default did:web:$DID_DOMAIN
@@ -132,8 +137,10 @@ function normalised(did, methods, assertion, service) {
     "@context": contextFor(did),
     id: did,
     verificationMethod: methods,
-    // `assertionMethod`, not `authentication`: these keys attest, they do not
-    // open sessions.
+    // These keys attest. `authentication` is, for now, an exact copy of
+    // `assertionMethod`, so that the DID can also authenticate its controller:
+    // a temporary stopgap (#21), superseded by #16, which decides whether
+    // authentication gets keys of its own.
     assertionMethod: assertion,
     service: kept.length ? service : [...(service ?? []), defaultService(did)],
   };

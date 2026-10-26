@@ -19,8 +19,8 @@
 # is logged and the exit code is 3; the caller calls the hook again.
 #
 # Secrets: the private key, when the operation needs one, comes on stdin and
-# stays in memory. Git authentication is the environment's: the publishing
-# server's own deploy key, through an SSH agent or GIT_SSH_COMMAND.
+# stays in memory. Git authentication is the environment's: an admin's
+# credentials until #9; no deploy key bypasses the rules of the data branches.
 #
 # Usage: DID_DOMAIN=<domain> DID_PUBLISH_WORKDIR=<clone> DID_PUBLISH_BUILD_HOOK=<url> \
 #          tools/publish.sh <make-did.mjs arguments>

@@ -27,7 +27,7 @@ The repository holds two kinds of content, on different branches:
 | Branch | Holds | Written by |
 |---|---|---|
 | `main` | all the code, the shared files of the site, the templates, this documentation, and the variables of each domain's project. **The code names no domain**: only `netlify-env-public/` and the test data of `tools/fixtures/` do. | reviewed pull requests only |
-| `data/<domain>` | that domain's DID document and revocation records, and nothing else | that domain's publishing tool, through `tools/publish.sh` |
+| `data/<domain>` | that domain's DID document and revocation records, and nothing else | `tools/publish.sh`, run by a repository admin until #9 (see *Write access*) |
 
 A data branch is an **orphan** branch: it shares no history with `main` and
 holds exactly these paths:
@@ -274,15 +274,21 @@ are on the branches:
 | Ruleset | Branches | Rules | Bypass |
 |---|---|---|---|
 | `Protect main` | `main` | pull request, review, linear history, no force-push, no deletion, the Deploy Preview of every project | none for deploy keys |
-| `Data branches` | `data/**` | restrict creations, updates and deletions; linear history; no force-push | deploy keys, repository admins |
+| `Data branches` | `data/**` | restrict creations, updates and deletions; linear history; no force-push | repository admins (deploy keys: removed until #9) |
 
 So **no deploy key can change the code or the deploy-time check**: they are
-on `main`, which takes reviewed pull requests only. A deploy key can only
-fast-forward an existing data branch.
+on `main`, which takes reviewed pull requests only.
 
-Each publishing server has **its own deploy key**, named after its domain
-(`publisher example.org`). The name does not limit the key. It designates the
-key in GitHub's "last used" column and when the key is deleted.
+**Autonomous publishing by deploy keys is temporarily disabled.** The design
+gives each publishing server its own deploy key, named after its domain
+(`publisher example.org`), and lets deploy keys fast-forward the data
+branches. Since #21 publishes the attestation keys under `authentication`
+too, a stolen deploy key could add a key that signs in as any domain. So,
+until #9 gives each domain a credential that only its own branch accepts,
+deploy keys are removed from the bypass of `Data branches`: a repository admin
+runs `tools/publish.sh`, and no `publisher <domain>` key is created. A deploy
+key left with write access can still push branches outside `main` and
+`data/**`, which nothing deploys; delete the unused ones.
 
 Also set in the repository: default workflow permissions **read**, and Actions
 not allowed to create or approve pull requests. A data branch could carry a
@@ -290,15 +296,20 @@ workflow file, and GitHub would run it. With these settings and no repository
 secret, such a workflow can neither write to `main` nor propose a change to
 it. The build refuses that data branch anyway (step 3).
 
-**Residual risk.** A deploy key of one domain can still push to another
+**Residual risk.** While deploy keys are out of the bypass, no deploy key can
+write to a data branch; the writers are the repository admins, behind their
+own login. The risk below returns, larger, if deploy keys are put back before
+#9: an added key would then also be an `authentication` key, able to sign in
+as the domain, and such sign-ins leave no durable trace.
+
+With deploy keys in the bypass, a deploy key of one domain can push to another
 domain's data branch. The tools stop mistakes: `publish.sh` writes only to
 `data/$DID_DOMAIN`, the other domain's build refuses anything that is not its
 data, and the check against its live site refuses any dropped or altered
 entry. Nothing in this repository stops a **stolen** key from **adding** a key
 to another domain's document. Removing that risk requires one credential per
 domain that only its own branch accepts, such as one GitHub App per domain,
-each the only bypass of its own `data/<domain>` ruleset. This is a follow-up
-issue.
+each the only bypass of its own `data/<domain>` ruleset: #9.
 
 ### Why this layout
 
@@ -362,6 +373,15 @@ fragment `#<name>`, for signers that name their key instead of deriving the
 fragment from it; `--also-key-name next` takes the next free `key-<n>`. A name
 designates one key for good, even after that key is revoked.
 
+**`authentication` is, for now, a copy of `assertionMethod`.** The keys
+attest (`assertionMethod`). So that the DID can also authenticate its
+controller (sign in to a service, answer a challenge), the tool publishes the
+same entries, in the same order, under `authentication`. This is a temporary
+copy of the attestation keys (#21), superseded by #16, which will decide
+whether authentication gets keys of its own. `--verify-file` refuses a
+document whose `authentication` is anything else; a document without the list,
+as published before this change, is accepted, and `--normalize` adds it.
+
 **2. No key entry ever disappears.** Removing a key would make every credential
 it ever signed unverifiable, and indistinguishable from a forgery. So:
 
@@ -375,6 +395,13 @@ it ever signed unverifiable, and indistinguishable from a forgery. So:
   `/revocations/`, found through the document's `service` entry. Revoking
   the last active key is allowed: a compromised key is revoked at once,
   successor or not;
+- **revocation is temporarily disabled**, until #16 decides what a revoked
+  key means for `authentication`: `--revoke` is refused unless `--emergency`
+  is also given. With `--emergency`, a compromised key is revoked as above,
+  and its entries stay in both `assertionMethod` and `authentication`, with
+  the placeholder key nobody can sign for. `publish.sh` records the
+  arguments, `--emergency` included, in the commit message of the data
+  branch;
 - credentials signed before the compromise can still be shown good, and
   re-issued: see `/doc/keyrevocationrecords` on the domain's own site, the
   published description of the records and of the checking procedure.
@@ -398,8 +425,9 @@ as it takes, and logs `publish: still retrying after <k> rejected pushes` every
 Any other failure stops it at once. Once the push is accepted, it calls the
 build hook. If the hook fails, the change is on the branch but not live: it
 logs an alert and exits `3`, and the caller calls the hook again. It uses the
-git credentials of its environment, its server's own deploy key, and never
-holds a secret.
+git credentials of its environment and never holds a secret. Until #9, those
+are a repository admin's: **autonomous publishing by deploy keys is
+temporarily disabled** (see *Write access*).
 
 **5. Nothing is cached.** `public/_headers` serves the document and the
 records with `Cache-Control: max-age=0, must-revalidate`, so a rotation or a
@@ -545,10 +573,11 @@ It leaves the clone's `HEAD`, index and working tree as they are. A
 7. **Resolution.** `curl -sI https://<domain>/.well-known/did.json` answers
    `200`, `content-type: application/did+json` and
    `access-control-allow-origin: *`.
-8. **The publisher.** Create a build hook for the project. Give the
-   publishing server its own deploy key with write access, titled
-   `publisher <domain>`, a single-branch clone of `data/<domain>`, the hook URL,
-   and `DID_DOMAIN`.
+8. **The publisher.** Create a build hook for the project. Until #9, a
+   repository admin publishes, with a single-branch clone of `data/<domain>`,
+   the hook URL and `DID_DOMAIN`; no deploy key is created (see *Write
+   access*). Once #9 lands, the publishing server gets the domain's own
+   credential instead.
 9. **The required check.** Add the project's Deploy Preview check,
    `netlify/<project>/deploy-preview`, to the required checks of `Protect main`.
 
@@ -626,7 +655,10 @@ commit that fails the check.
 It refuses a fragment that has the *shape* of a thumbprint without being one, a
 `controller` that does not designate the document, a private member `d` (a
 published private key is burnt), an `assertionMethod` without a matching
-method, and a document where no key is addressable by its thumbprint. For a
+method, an `authentication` list that is not exactly `assertionMethod` (same
+entries, same order: `FAULT authentication differs from assertionMethod (a
+temporary copy until #16)`), and a document where no key is addressable by its
+thumbprint. For a
 revoked entry, it requires the exact placeholder key and a consistent
 revocation record, whose proof files commit to the roots they claim. It does
 not check Bitcoin or a timestamp authority: the procedure on
