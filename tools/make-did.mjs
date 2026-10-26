@@ -142,6 +142,7 @@ function normalised(did, methods, assertion, service) {
     // a temporary stopgap (#21), superseded by #16, which decides whether
     // authentication gets keys of its own.
     assertionMethod: assertion,
+    authentication: assertion && [...assertion],
     service: kept.length ? service : [...(service ?? []), defaultService(did)],
   };
 }
@@ -262,6 +263,9 @@ async function checkState(site, docFile, did, faults) {
   const ids = methods.map((m) => m.id);
   for (const a of doc.assertionMethod ?? [])
     if (!ids.includes(a)) faults.add(`assertionMethod ${a} has no verificationMethod`);
+  // A document without the list is the form published before #21: accepted.
+  if ("authentication" in doc && !same(doc.authentication, doc.assertionMethod))
+    faults.add("authentication differs from assertionMethod (a temporary copy until #16)");
   return { doc, dir, records };
 }
 
@@ -513,6 +517,10 @@ async function main() {
   }
 
   const revokeTp = arg("--revoke"), updateTp = arg("--revoke-update"), anchorTp = arg("--anchor");
+  // Before anything is written: no record, no document.
+  if (revokeTp && !flag("--emergency"))
+    faults.add("--revoke is disabled until #16 (authentication keys); --emergency revokes anyway");
+  faults.exitIfAny();
   if (publicJwk) doc = await withKey(did, doc, publicJwk, arg("--also-key-name"), flag("--append"), faults);
   if (revokeTp) doc = await revoke(did, doc, site, revokeTp, faults);
   if (updateTp) return revokeUpdate(did, doc, site, updateTp, faults);
