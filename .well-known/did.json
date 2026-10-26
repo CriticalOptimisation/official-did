@@ -24,6 +24,9 @@
   "assertionMethod": [
     "did:web:cabinet-medical-du-parc.care#E6UzKh3VLrOPOykOiQDasxiQL7HC3cjNmWdxFsT0_lg"
   ],
+  "authentication": [
+    "did:web:cabinet-medical-du-parc.care#E6UzKh3VLrOPOykOiQDasxiQL7HC3cjNmWdxFsT0_lg"
+  ],
   "service": [
     {
       "id": "did:web:cabinet-medical-du-parc.care#revocations",
