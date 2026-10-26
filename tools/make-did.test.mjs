@@ -129,18 +129,6 @@ test("--check: the document rebuilt from the same key matches; another key does 
   assert.equal(run(other.jwk).status, 1);
 });
 
-// REVIEW PLACEHOLDER (#8): the published documents left main for the data
-// branches, which the deploy-time build checks (tools/netlify-build.test.mjs).
-//   the published document passes the continuous-integration check
-//     -> netlify-build.test.mjs: an extension of the live state passes, and the built site carries the data tree's document
-//     -> netlify-build.test.mjs: the data tree is the branch data/$DID_DOMAIN of $REPOSITORY_URL, and the build logs its commit
-// test("the published document passes the continuous-integration check", async () => {
-//   // No --did: the tool takes the DID from did.config.json.
-//   const published = join(REPO, "public/.well-known/did.json");
-//   const r = spawnSync(process.execPath, [SCRIPT, "--verify-file", published], { encoding: "utf8", cwd: REPO });
-//   assert.equal(r.status, 0, r.stderr);
-// });
-
 // --- sites: a document, its records, and what may change between two states --
 //
 // A site is a directory laid out as Netlify publishes it: .well-known/did.json,
@@ -221,7 +209,7 @@ test("DID_LOG: a new revocation record carries it as its `log`", async () => {
   ok(onSite(site, ["--from-private", "-", "--append"], b.jwk), "second key");
   const tp = await thumbprintOf(a.jwk);
   const r = spawnSync(process.execPath,
-    [SCRIPT, "--did", DID, "--site", site, "--out", docPath(site), "--revoke", tp, "--compromised-after", "2026-01-01T00:00:00Z"],
+    [SCRIPT, "--did", DID, "--site", site, "--out", docPath(site), "--emergency", "--revoke", tp, "--compromised-after", "2026-01-01T00:00:00Z"],
     { encoding: "utf8", cwd: REPO, env: { ...process.env, DID_LOG: "https://log.example.test/" } });
   ok(r, "revoke");
   assert.equal(JSON.parse(await readFile(recordPath(site, tp), "utf8")).log, "https://log.example.test/");
@@ -237,7 +225,7 @@ test("--did and --log take precedence over DID_DOMAIN and DID_LOG", async () => 
   ok(gen(["--from-private", "-", "--append"], b.jwk), "second key");
   assert.equal(JSON.parse(await readFile(docPath(site), "utf8")).id, DID);
   const tp = await thumbprintOf(a.jwk);
-  ok(gen(["--revoke", tp, "--compromised-after", "2026-01-01T00:00:00Z", "--log", "https://log.example.test/"]), "revoke");
+  ok(gen(["--emergency", "--revoke", tp, "--compromised-after", "2026-01-01T00:00:00Z", "--log", "https://log.example.test/"]), "revoke");
   assert.equal(JSON.parse(await readFile(recordPath(site, tp), "utf8")).log, "https://log.example.test/");
 });
 
@@ -277,7 +265,7 @@ test("--revoke: placeholder key, `revoked`, a self-certifying record; the old si
   const data = Buffer.from("a credential signed before the compromise");
   const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, a.pair.privateKey, data);
 
-  ok(onSite(site, ["--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"]), "revoke");
+  ok(onSite(site, ["--emergency", "--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"]), "revoke");
   const doc = await readDoc(site);
 
   // Every entry of the key is revoked, with the placeholder; the other key is untouched.
@@ -322,7 +310,7 @@ test("--anchor: adds an anchor whose .ots commits to its root; another digest is
   ok(onSite(site, ["--from-private", "-"], a.jwk), "first key");
   ok(onSite(site, ["--from-private", "-", "--append"], b.jwk), "second key");
   const tpA = await thumbprintOf(a.jwk);
-  ok(onSite(site, ["--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"]), "revoke");
+  ok(onSite(site, ["--emergency", "--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"]), "revoke");
 
   const root = crypto.getRandomValues(new Uint8Array(32));
   const dir = await mkdtemp(join(tmpdir(), "did-ots-"));
@@ -351,7 +339,7 @@ test("--verify-file --previous: extensions pass; a removed or altered entry, or 
   // An appended key and a valid revocation both extend v1.
   ok(onSite(site, ["--from-private", "-", "--append"], c.jwk), "third key");
   ok(verifyPrevious(site, v1), "append");
-  ok(onSite(site, ["--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"]), "revoke");
+  ok(onSite(site, ["--emergency", "--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"]), "revoke");
   ok(verifyPrevious(site, v1), "revocation");
   const v2 = await copySite(site);
 
@@ -407,6 +395,197 @@ test("--normalize: the CID context, the documentation term and the service entry
   ok(verifyPrevious(site, old), "normalized extends the old form");
 });
 
+// --- authentication: a temporary copy of assertionMethod (#21) --------------------
+//
+// Until #16, the tool publishes the entries of assertionMethod under
+// `authentication` too, the same identifiers in the same order, and
+// --verify-file refuses any other list. Revocation is disabled unless
+// --emergency is given.
+
+const AUTH_FAULT = /^FAULT authentication differs from assertionMethod \(a temporary copy until #16\)$/;
+
+test("creation: authentication is a copy of assertionMethod, with one entry or two", async () => {
+  const { jwk } = await freshKey();
+  const one = await scratch();
+  make(jwk, one);
+  const d1 = JSON.parse(await readFile(one, "utf8"));
+  assert.deepEqual(d1.authentication, d1.assertionMethod);
+  assert.deepEqual(d1.authentication, [`${DID}#${await thumbprintOf(jwk)}`]);
+
+  const two = await scratch();
+  make(jwk, two, ["--also-key-name", "key-1"]);
+  const d2 = JSON.parse(await readFile(two, "utf8"));
+  assert.deepEqual(d2.authentication, d2.assertionMethod);
+  assert.equal(d2.authentication.length, 2);
+  // The list goes right after assertionMethod.
+  const keys = Object.keys(d2);
+  assert.equal(keys.indexOf("authentication"), keys.indexOf("assertionMethod") + 1);
+  assert.equal(verify(two).status, 0);
+});
+
+test("rotation: --append adds the new key to authentication, after the first", async () => {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey();
+  ok(onSite(site, ["--from-private", "-", "--also-key-name", "key-1"], a.jwk), "first key");
+  const before = await readDoc(site);
+  ok(onSite(site, ["--from-private", "-", "--append"], b.jwk), "append");
+  const after = await readDoc(site);
+  assert.deepEqual(after.authentication, after.assertionMethod);
+  assert.deepEqual(after.authentication.slice(0, 2), before.assertionMethod);
+  assert.equal(after.authentication[2], `${DID}#${await thumbprintOf(b.jwk)}`);
+  ok(verifyPrevious(site, site), "verify");
+});
+
+test("rollout: --normalize adds authentication to a document without it, which it extends", async () => {
+  const site = await newSite();
+  const { jwk } = await freshKey();
+  ok(onSite(site, ["--from-private", "-", "--also-key-name", "key-1"], jwk), "first key");
+  // The form published before #21: no authentication list.
+  const doc = await readDoc(site);
+  delete doc.authentication;
+  await writeFile(docPath(site), JSON.stringify(doc, null, 2) + "\n");
+  ok(verifyPrevious(site, site), "a document without the list is accepted");
+  const old = await copySite(site);
+
+  ok(onSite(site, ["--normalize"]), "normalize");
+  const after = await readDoc(site);
+  assert.deepEqual(after.authentication, doc.assertionMethod);
+  assert.deepEqual(after.verificationMethod, doc.verificationMethod);
+  ok(verifyPrevious(site, old), "the normalized document extends the old form");
+  const again = ok(onSite(site, ["--normalize"]), "normalize again");
+  assert.ok(hasLine(again.stderr, /^unchanged .+did\.json$/), again.stderr);
+});
+
+test("--revoke without --emergency is refused, and nothing is written", async () => {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], a.jwk), "first key");
+  ok(onSite(site, ["--from-private", "-", "--append"], b.jwk), "second key");
+  const tpA = await thumbprintOf(a.jwk);
+  const before = await readFile(docPath(site), "utf8");
+  const r = onSite(site, ["--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"]);
+  assert.equal(r.status, 1, r.stderr);
+  assert.ok(hasLine(r.stderr, /^FAULT --revoke is disabled until #16 \(authentication keys\); --emergency revokes anyway$/), r.stderr);
+  assert.equal(await readFile(docPath(site), "utf8"), before, "document unchanged");
+  await assert.rejects(readFile(recordPath(site, tpA)), { code: "ENOENT" }, "no record written");
+});
+
+test("--revoke --emergency revokes; the revoked entries stay in both lists", async () => {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey();
+  ok(onSite(site, ["--from-private", "-", "--also-key-name", "key-1"], a.jwk), "first key");
+  ok(onSite(site, ["--from-private", "-", "--append"], b.jwk), "second key");
+  const tpA = await thumbprintOf(a.jwk);
+  const v1 = await copySite(site);
+  ok(onSite(site, ["--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z", "--emergency"]), "emergency revoke");
+  const doc = await readDoc(site);
+  assert.ok(doc.verificationMethod.filter((m) => "revoked" in m).length === 2);
+  assert.deepEqual(doc.authentication, doc.assertionMethod);
+  assert.ok(doc.authentication.includes(`${DID}#${tpA}`) && doc.authentication.includes(`${DID}#key-1`));
+  await readFile(recordPath(site, tpA)); // the record exists
+  ok(verifyPrevious(site, v1), "the revocation extends the previous state");
+});
+
+test("--verify-file refuses an authentication list that is not exactly assertionMethod; no list is accepted", async () => {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey();
+  ok(onSite(site, ["--from-private", "-", "--also-key-name", "key-1"], a.jwk), "first key");
+  ok(onSite(site, ["--from-private", "-", "--append"], b.jwk), "second key");
+  const base = await readDoc(site);
+  const am = base.assertionMethod; // [#tpA, #key-1, #tpB]
+  const tpA = await thumbprintOf(a.jwk);
+  const flip = (s) => s.slice(0, -1) + (s.endsWith("A") ? "B" : "A");
+  const cases = {
+    "an entry missing": am.slice(1),
+    "an entry added": [...am, `${DID}#key-2`],
+    "an entry twice": [...am, am[0]],
+    "the order swapped": [am[1], am[0], am[2]],
+    "#key-10 for #key-1": am.map((id) => id === `${DID}#key-1` ? `${DID}#key-10` : id),
+    "a thumbprint with one character changed": am.map((id) => id === `${DID}#${tpA}` ? `${DID}#${flip(tpA)}` : id),
+    "a trailing space": am.map((id, i) => i === 0 ? `${id} ` : id),
+    "another domain": am.map((id) => id.replace(DID, `${DID}.example`)),
+    "a relative reference": am.map((id) => id.slice(DID.length)),
+    "an embedded method object": am.map((id, i) => i === 0 ? base.verificationMethod.find((m) => m.id === id) : id),
+    "a different case": am.map((id) => id.replace(DID, DID.toUpperCase())),
+    "an empty list": [],
+  };
+  for (const [what, list] of Object.entries(cases)) {
+    const s = await copySite(site);
+    await writeFile(docPath(s), JSON.stringify({ ...base, authentication: list }, null, 2) + "\n");
+    const r = verify(docPath(s));
+    assert.equal(r.status, 1, `${what}: ${r.stderr}`);
+    assert.ok(hasLine(r.stderr, AUTH_FAULT), `${what}: ${r.stderr}`);
+  }
+
+  const none = await copySite(site);
+  const { authentication, ...without } = base;
+  await writeFile(docPath(none), JSON.stringify(without, null, 2) + "\n");
+  ok(verify(docPath(none)), "no list");
+});
+
+// Edge cases of #21.
+
+test("--revoke without --emergency, with a key to --append: refused, and nothing written", async () => {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], a.jwk), "first key");
+  const tpA = await thumbprintOf(a.jwk);
+  const before = await readFile(docPath(site), "utf8");
+  const r = onSite(site, ["--from-private", "-", "--append", "--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"], b.jwk);
+  assert.equal(r.status, 1, r.stderr);
+  assert.deepEqual(lines(r.stderr.trimEnd()), ["FAULT --revoke is disabled until #16 (authentication keys); --emergency revokes anyway"]);
+  assert.equal(await readFile(docPath(site), "utf8"), before, "document unchanged: the key was not appended either");
+  await assert.rejects(readFile(recordPath(site, tpA)), { code: "ENOENT" }, "no record written");
+});
+
+test("--revoke --emergency with a key to --append: the new key joins both lists, in one change", async () => {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], a.jwk), "first key");
+  const tpA = await thumbprintOf(a.jwk), tpB = await thumbprintOf(b.jwk);
+  const v1 = await copySite(site);
+  ok(onSite(site, ["--from-private", "-", "--append", "--emergency", "--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"], b.jwk), "append and revoke");
+  const doc = await readDoc(site);
+  assert.deepEqual(doc.assertionMethod, [`${DID}#${tpA}`, `${DID}#${tpB}`]);
+  assert.deepEqual(doc.authentication, doc.assertionMethod);
+  assert.ok("revoked" in doc.verificationMethod[0] && !("revoked" in doc.verificationMethod[1]));
+  const v = ok(verifyPrevious(site, v1), "the change extends the previous state");
+  assert.ok(!hasLine(v.stderr, /^FAULT /), v.stderr);
+});
+
+test("--emergency alone is not an operation: a usage error, nothing written", async () => {
+  const site = await newSite();
+  const { jwk } = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], jwk), "first key");
+  const before = await readFile(docPath(site), "utf8");
+  const r = onSite(site, ["--emergency"]);
+  assert.equal(r.status, 2, r.stderr);
+  assert.ok(hasLine(r.stderr, /^one of --new, --from-private, .+ is required$/), r.stderr);
+  assert.equal(await readFile(docPath(site), "utf8"), before);
+});
+
+test("--from-private --check: the key is found, and nothing is written, with the list present", async () => {
+  const site = await newSite();
+  const { jwk } = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], jwk), "first key");
+  const before = await readFile(docPath(site), "utf8");
+  assert.ok("authentication" in JSON.parse(before));
+  const r = ok(onSite(site, ["--from-private", "-", "--check"], jwk), "check");
+  assert.deepEqual(lines(r.stderr.trimEnd()), [`OK ${docPath(site)} carries the key supplied`]);
+  assert.equal(await readFile(docPath(site), "utf8"), before);
+});
+
+test("--verify-file refuses an authentication list in a document without assertionMethod", async () => {
+  const site = await newSite();
+  const { jwk } = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], jwk), "first key");
+  const { assertionMethod, ...doc } = await readDoc(site);
+  await writeFile(docPath(site), JSON.stringify(doc, null, 2) + "\n");
+  const r = verify(docPath(site));
+  assert.equal(r.status, 1, r.stderr);
+  assert.ok(hasLine(r.stderr, AUTH_FAULT), r.stderr);
+});
+
 // --- edge cases -----------------------------------------------------------------
 
 /** A site with keys a (also #key-1) and b, a revoked; returns the pieces. */
@@ -416,7 +595,7 @@ async function revokedSite() {
   ok(onSite(site, ["--from-private", "-", "--also-key-name", "key-1"], a.jwk), "first key");
   ok(onSite(site, ["--from-private", "-", "--append"], b.jwk), "second key");
   const tpA = await thumbprintOf(a.jwk), tpB = await thumbprintOf(b.jwk);
-  ok(onSite(site, ["--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"]), "revoke");
+  ok(onSite(site, ["--emergency", "--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"]), "revoke");
   return { site, a, b, tpA, tpB };
 }
 
@@ -446,10 +625,10 @@ test("a logical name designates one key for good; `next` takes the next free key
 
 test("--revoke refuses an unknown thumbprint, and a key already revoked", async () => {
   const s = await revokedSite();
-  const unknown = onSite(s.site, ["--revoke", "A".repeat(43), "--compromised-after", "2026-01-01T00:00:00Z"]);
+  const unknown = onSite(s.site, ["--emergency", "--revoke", "A".repeat(43), "--compromised-after", "2026-01-01T00:00:00Z"]);
   assert.notEqual(unknown.status, 0);
   assert.ok(hasLine(unknown.stderr, /^FAULT A{43}: no entry with this thumbprint$/), unknown.stderr);
-  const again = onSite(s.site, ["--revoke", s.tpA, "--compromised-after", "2026-01-01T00:00:00Z"]);
+  const again = onSite(s.site, ["--emergency", "--revoke", s.tpA, "--compromised-after", "2026-01-01T00:00:00Z"]);
   assert.notEqual(again.status, 0);
   assert.ok(hasLine(again.stderr, /^FAULT .+: already revoked$/), again.stderr);
 });
@@ -466,7 +645,7 @@ test("--compromised-after: required, a UTC dateTimeStamp, not after the revocati
     [["--compromised-after", "2026-01-01"], /^FAULT --compromised-after 2026-01-01: not a UTC dateTimeStamp$/],
     [["--compromised-after", "2999-01-01T00:00:00Z"], /^FAULT --compromised-after 2999-01-01T00:00:00Z: after the revocation .+$/],
   ]) {
-    const r = onSite(site, ["--revoke", tpA, ...args]);
+    const r = onSite(site, ["--emergency", "--revoke", tpA, ...args]);
     assert.notEqual(r.status, 0);
     assert.ok(hasLine(r.stderr, re), r.stderr);
   }
@@ -477,7 +656,7 @@ test("revoking the last active key succeeds, with a warning; the document still 
   const site = await newSite();
   const { jwk } = await freshKey();
   ok(onSite(site, ["--from-private", "-"], jwk), "only key");
-  const r = ok(onSite(site, ["--revoke", await thumbprintOf(jwk), "--compromised-after", "2026-01-01T00:00:00Z"]), "revoke");
+  const r = ok(onSite(site, ["--emergency", "--revoke", await thumbprintOf(jwk), "--compromised-after", "2026-01-01T00:00:00Z"]), "revoke");
   assert.ok(hasLine(r.stderr, /^WARNING did:web:example\.test: no active key remains; .+$/), r.stderr);
   const v = ok(verifyPrevious(site, site), "verify");
   assert.ok(hasLine(v.stderr, /^WARNING did:web:example\.test: no active key; .+$/), v.stderr);
@@ -596,3 +775,4 @@ test("the records' endpoint may move, if every record follows; a lost record or 
 // | PR     | Summary                                                       |
 // |--------|---------------------------------------------------------------|
 // | #10    | DID_DOMAIN and DID_LOG replace --config (#8)                  |
+// | #22    | authentication copied, --revoke behind --emergency (#21)      |
