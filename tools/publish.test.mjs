@@ -176,6 +176,52 @@ test("a make-did.mjs failure is not a lost race: no push, no retry", async () =>
   assert.equal(await readFile(count, "utf8").catch(() => "0"), "0");
 });
 
+// --- authentication, a copy of assertionMethod (#21) ------------------------------
+
+test("rollout: --normalize on a branch from before #21 publishes the authentication list", async () => {
+  const ctx = await setup();
+  // The form published before #21: no authentication list.
+  const doc = JSON.parse(await readFile(join(ctx.seed, DOCUMENT), "utf8"));
+  delete doc.authentication;
+  await writeFile(join(ctx.seed, DOCUMENT), JSON.stringify(doc, null, 2) + "\n");
+  git(ctx.seed, "commit", "-qam", "before #21");
+  git(ctx.seed, "push", "-q", "origin", BRANCH);
+
+  const r = await publish(ctx, {}, ["--normalize"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(matching(r.stderr, /^publish: published [0-9a-f]{40} after 0 rejected pushes$/).length, 1, r.stderr);
+  const after = originDoc(ctx);
+  assert.deepEqual(after.authentication, doc.assertionMethod);
+  assert.deepEqual(after.verificationMethod, doc.verificationMethod);
+  assert.equal(git(ctx.origin, "log", "-1", "--format=%s", BRANCH).trim(), "did: make-did.mjs --normalize");
+  assert.deepEqual(r.hookCalls, ["POST"]);
+});
+
+test("--revoke without --emergency is refused: nothing pushed, no build", async () => {
+  const ctx = await setup();
+  const before = headOf(ctx.origin, BRANCH);
+  const tp = originDoc(ctx).assertionMethod.at(-1).split("#")[1];
+  const r = await publish(ctx, {}, ["--revoke", tp, "--compromised-after", "2026-01-01T00:00:00Z"]);
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(matching(r.stderr, /^FAULT --revoke is disabled until #16 \(authentication keys\); --emergency revokes anyway$/).length, 1, r.stderr);
+  assert.equal(matching(r.stderr, /^publish: make-did\.mjs failed, not retried$/).length, 1, r.stderr);
+  assert.equal(headOf(ctx.origin, BRANCH), before);
+  assert.deepEqual(r.hookCalls, []);
+});
+
+test("--revoke --emergency is published, and the commit message records --emergency", async () => {
+  const ctx = await setup();
+  const tp = originDoc(ctx).assertionMethod.at(-1).split("#")[1];
+  const args = ["--emergency", "--revoke", tp, "--compromised-after", "2026-01-01T00:00:00Z"];
+  const r = await publish(ctx, {}, args);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(git(ctx.origin, "log", "-1", "--format=%s", BRANCH).trim(), `did: make-did.mjs ${args.join(" ")}`);
+  const after = originDoc(ctx);
+  assert.ok(after.verificationMethod.every((m) => "revoked" in m));
+  assert.deepEqual(after.authentication, after.assertionMethod);
+  assert.deepEqual(r.hookCalls, ["POST"]);
+});
+
 // --- several domains (#8) -------------------------------------------------------
 
 test("publishing for A changes data/A only: data/B and main are untouched", async () => {

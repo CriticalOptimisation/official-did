@@ -50,6 +50,8 @@ test("a build that removes an entry of the live state fails", async () => {
   const doc = JSON.parse(await docOf(a.tree));
   doc.verificationMethod = doc.verificationMethod.filter((m) => !m.id.endsWith(a.tp2));
   doc.assertionMethod = doc.verificationMethod.map((m) => m.id);
+  // Consistent otherwise, so that the extension check is what fails (#21).
+  doc.authentication = doc.assertionMethod;
   await writeFile(join(a.tree, DOCUMENT), JSON.stringify(doc, null, 2) + "\n");
   const r = await build(A, { DID_DATA_DIR: a.tree, DID_PREVIOUS_DIR: live, URL: `https://${A}` });
   assert.notEqual(r.status, 0);

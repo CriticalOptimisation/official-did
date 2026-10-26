@@ -129,18 +129,6 @@ test("--check: the document rebuilt from the same key matches; another key does 
   assert.equal(run(other.jwk).status, 1);
 });
 
-// REVIEW PLACEHOLDER (#8): the published documents left main for the data
-// branches, which the deploy-time build checks (tools/netlify-build.test.mjs).
-//   the published document passes the continuous-integration check
-//     -> netlify-build.test.mjs: an extension of the live state passes, and the built site carries the data tree's document
-//     -> netlify-build.test.mjs: the data tree is the branch data/$DID_DOMAIN of $REPOSITORY_URL, and the build logs its commit
-// test("the published document passes the continuous-integration check", async () => {
-//   // No --did: the tool takes the DID from did.config.json.
-//   const published = join(REPO, "public/.well-known/did.json");
-//   const r = spawnSync(process.execPath, [SCRIPT, "--verify-file", published], { encoding: "utf8", cwd: REPO });
-//   assert.equal(r.status, 0, r.stderr);
-// });
-
 // --- sites: a document, its records, and what may change between two states --
 //
 // A site is a directory laid out as Netlify publishes it: .well-known/did.json,
@@ -533,6 +521,69 @@ test("--verify-file refuses an authentication list that is not exactly assertion
   const { authentication, ...without } = base;
   await writeFile(docPath(none), JSON.stringify(without, null, 2) + "\n");
   ok(verify(docPath(none)), "no list");
+});
+
+// Edge cases of #21.
+
+test("--revoke without --emergency, with a key to --append: refused, and nothing written", async () => {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], a.jwk), "first key");
+  const tpA = await thumbprintOf(a.jwk);
+  const before = await readFile(docPath(site), "utf8");
+  const r = onSite(site, ["--from-private", "-", "--append", "--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"], b.jwk);
+  assert.equal(r.status, 1, r.stderr);
+  assert.deepEqual(lines(r.stderr.trimEnd()), ["FAULT --revoke is disabled until #16 (authentication keys); --emergency revokes anyway"]);
+  assert.equal(await readFile(docPath(site), "utf8"), before, "document unchanged: the key was not appended either");
+  await assert.rejects(readFile(recordPath(site, tpA)), { code: "ENOENT" }, "no record written");
+});
+
+test("--revoke --emergency with a key to --append: the new key joins both lists, in one change", async () => {
+  const site = await newSite();
+  const a = await freshKey(), b = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], a.jwk), "first key");
+  const tpA = await thumbprintOf(a.jwk), tpB = await thumbprintOf(b.jwk);
+  const v1 = await copySite(site);
+  ok(onSite(site, ["--from-private", "-", "--append", "--emergency", "--revoke", tpA, "--compromised-after", "2026-01-01T00:00:00Z"], b.jwk), "append and revoke");
+  const doc = await readDoc(site);
+  assert.deepEqual(doc.assertionMethod, [`${DID}#${tpA}`, `${DID}#${tpB}`]);
+  assert.deepEqual(doc.authentication, doc.assertionMethod);
+  assert.ok("revoked" in doc.verificationMethod[0] && !("revoked" in doc.verificationMethod[1]));
+  const v = ok(verifyPrevious(site, v1), "the change extends the previous state");
+  assert.ok(!hasLine(v.stderr, /^FAULT /), v.stderr);
+});
+
+test("--emergency alone is not an operation: a usage error, nothing written", async () => {
+  const site = await newSite();
+  const { jwk } = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], jwk), "first key");
+  const before = await readFile(docPath(site), "utf8");
+  const r = onSite(site, ["--emergency"]);
+  assert.equal(r.status, 2, r.stderr);
+  assert.ok(hasLine(r.stderr, /^one of --new, --from-private, .+ is required$/), r.stderr);
+  assert.equal(await readFile(docPath(site), "utf8"), before);
+});
+
+test("--from-private --check: the key is found, and nothing is written, with the list present", async () => {
+  const site = await newSite();
+  const { jwk } = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], jwk), "first key");
+  const before = await readFile(docPath(site), "utf8");
+  assert.ok("authentication" in JSON.parse(before));
+  const r = ok(onSite(site, ["--from-private", "-", "--check"], jwk), "check");
+  assert.deepEqual(lines(r.stderr.trimEnd()), [`OK ${docPath(site)} carries the key supplied`]);
+  assert.equal(await readFile(docPath(site), "utf8"), before);
+});
+
+test("--verify-file refuses an authentication list in a document without assertionMethod", async () => {
+  const site = await newSite();
+  const { jwk } = await freshKey();
+  ok(onSite(site, ["--from-private", "-"], jwk), "first key");
+  const { assertionMethod, ...doc } = await readDoc(site);
+  await writeFile(docPath(site), JSON.stringify(doc, null, 2) + "\n");
+  const r = verify(docPath(site));
+  assert.equal(r.status, 1, r.stderr);
+  assert.ok(hasLine(r.stderr, AUTH_FAULT), r.stderr);
 });
 
 // --- edge cases -----------------------------------------------------------------
